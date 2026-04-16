@@ -10,7 +10,7 @@ const app = express();
 // ======================
 app.use(express.json());
 
-// Request logger
+// Request logger (debugging)
 app.use((req, res, next) => {
   console.log(`${req.method} ${req.url}`);
   next();
@@ -24,6 +24,9 @@ app.use("/wallet", require("./routes/wallet"));
 app.use("/admin", require("./routes/admin"));
 app.use("/tasks", require("./routes/tasks"));
 
+// 💳 PAYMENTS / ESCROW (NEW)
+app.use("/payments", require("./routes/payments"));
+
 // ======================
 // HEALTH CHECK
 // ======================
@@ -31,7 +34,7 @@ app.get("/", (req, res) => {
   res.json({
     app: "Trivexa Pay",
     status: "running",
-    version: "1.1.0"
+    version: "1.2.0"
   });
 });
 
