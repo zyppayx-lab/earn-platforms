@@ -6,11 +6,11 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// ROUTES
 app.use("/auth", require("./routes/auth"));
+app.use("/wallet", require("./routes/wallet"));
 
 app.get("/", (req, res) => {
-  res.send("Trivexa Pay API Running");
+  res.send("Trivexa Pay Running");
 });
 
 app.listen(3000, () => {
