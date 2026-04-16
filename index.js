@@ -10,7 +10,7 @@ const app = express();
 // ======================
 app.use(express.json());
 
-// Simple request logger (useful for debugging)
+// Request logger
 app.use((req, res, next) => {
   console.log(`${req.method} ${req.url}`);
   next();
@@ -22,6 +22,7 @@ app.use((req, res, next) => {
 app.use("/auth", require("./routes/auth"));
 app.use("/wallet", require("./routes/wallet"));
 app.use("/admin", require("./routes/admin"));
+app.use("/tasks", require("./routes/tasks"));
 
 // ======================
 // HEALTH CHECK
@@ -30,7 +31,7 @@ app.get("/", (req, res) => {
   res.json({
     app: "Trivexa Pay",
     status: "running",
-    version: "1.0.0"
+    version: "1.1.0"
   });
 });
 
