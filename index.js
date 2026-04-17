@@ -19,13 +19,12 @@ app.use((req, res, next) => {
 // ======================
 // ROUTES
 // ======================
-app.use("/auth", require("./routes/auth"));
-app.use("/wallet", require("./routes/wallet"));
-app.use("/admin", require("./routes/admin"));
-app.use("/tasks", require("./routes/tasks"));
 
-// 💳 PAYMENTS / ESCROW (NEW)
+app.use("/tasks", require("./routes/tasks"));
 app.use("/payments", require("./routes/payments"));
+app.use("/admin", require("./routes/admin"));
+app.use("/wallet", require("./routes/wallet"));
+app.use("/auth", require("./routes/auth"));
 
 // ======================
 // HEALTH CHECK
