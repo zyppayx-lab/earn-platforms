@@ -25,6 +25,7 @@ app.use("/payments", require("./routes/payments"));
 app.use("/admin", require("./routes/admin"));
 app.use("/wallet", require("./routes/wallet"));
 app.use("/auth", require("./routes/auth"));
+app.use("/admin-analytics", require("./routes/adminAnalytics"));
 
 // ======================
 // HEALTH CHECK
