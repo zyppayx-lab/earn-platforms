@@ -1,18 +1,33 @@
 const express = require("express");
 const dotenv = require("dotenv");
+const bodyParser = require("body-parser");
 
 dotenv.config();
 
 const app = express();
 
 // ======================
+// 🔐 PAYSTACK WEBHOOK RAW BODY (IMPORTANT)
+// ======================
+app.use(bodyParser.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf;
+  }
+}));
+
+// ======================
 // MIDDLEWARE
 // ======================
-app.use(express.json());
 
-// Request logger (debugging)
+// Basic security header
 app.use((req, res, next) => {
-  console.log(`${req.method} ${req.url}`);
+  res.setHeader("X-Powered-By", "Trivexa Pay");
+  next();
+});
+
+// Request logger
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
 });
 
@@ -20,11 +35,13 @@ app.use((req, res, next) => {
 // ROUTES
 // ======================
 
-app.use("/tasks", require("./routes/tasks"));
-app.use("/payments", require("./routes/payments"));
-app.use("/admin", require("./routes/admin"));
-app.use("/wallet", require("./routes/wallet"));
+app.use("/webhook", require("./routes/webhook"));   // ✅ Paystack webhook
+
 app.use("/auth", require("./routes/auth"));
+app.use("/wallet", require("./routes/wallet"));
+app.use("/payments", require("./routes/payments"));
+app.use("/tasks", require("./routes/tasks"));
+app.use("/admin", require("./routes/admin"));
 app.use("/admin-analytics", require("./routes/adminAnalytics"));
 
 // ======================
@@ -34,7 +51,7 @@ app.get("/", (req, res) => {
   res.json({
     app: "Trivexa Pay",
     status: "running",
-    version: "1.2.0"
+    version: "1.4.0"
   });
 });
 
@@ -52,8 +69,9 @@ app.use((req, res) => {
 // ======================
 app.use((err, req, res, next) => {
   console.error("Server Error:", err);
-  res.status(500).json({
-    error: "Internal server error"
+
+  res.status(err.status || 500).json({
+    error: err.message || "Internal server error"
   });
 });
 
@@ -63,5 +81,5 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`Trivexa Pay running on port ${PORT}`);
+  console.log(`🚀 Trivexa Pay running on port ${PORT}`);
 });
