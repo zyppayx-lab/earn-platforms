@@ -7,7 +7,7 @@ dotenv.config();
 const app = express();
 
 // ======================
-// 🔐 PAYSTACK WEBHOOK RAW BODY (IMPORTANT)
+// 🔐 PAYSTACK WEBHOOK RAW BODY
 // ======================
 app.use(bodyParser.json({
   verify: (req, res, buf) => {
@@ -16,16 +16,18 @@ app.use(bodyParser.json({
 }));
 
 // ======================
+// ⏱ START SCHEDULER
+// ======================
+require("./services/scheduler");
+
+// ======================
 // MIDDLEWARE
 // ======================
-
-// Basic security header
 app.use((req, res, next) => {
   res.setHeader("X-Powered-By", "Trivexa Pay");
   next();
 });
 
-// Request logger
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
@@ -34,8 +36,7 @@ app.use((req, res, next) => {
 // ======================
 // ROUTES
 // ======================
-
-app.use("/webhook", require("./routes/webhook"));   // ✅ Paystack webhook
+app.use("/webhook", require("./routes/webhook"));
 
 app.use("/auth", require("./routes/auth"));
 app.use("/wallet", require("./routes/wallet"));
@@ -43,6 +44,7 @@ app.use("/payments", require("./routes/payments"));
 app.use("/tasks", require("./routes/tasks"));
 app.use("/admin", require("./routes/admin"));
 app.use("/admin-analytics", require("./routes/adminAnalytics"));
+app.use("/realtime", require("./routes/realtime")); // 🔴 real-time events
 
 // ======================
 // HEALTH CHECK
@@ -51,35 +53,29 @@ app.get("/", (req, res) => {
   res.json({
     app: "Trivexa Pay",
     status: "running",
-    version: "1.4.0"
+    version: "1.5.0"
   });
 });
 
 // ======================
-// 404 HANDLER
+// 404
 // ======================
 app.use((req, res) => {
-  res.status(404).json({
-    error: "Route not found"
-  });
+  res.status(404).json({ error: "Route not found" });
 });
 
 // ======================
-// GLOBAL ERROR HANDLER
+// ERROR HANDLER
 // ======================
 app.use((err, req, res, next) => {
-  console.error("Server Error:", err);
-
+  console.error(err);
   res.status(err.status || 500).json({
     error: err.message || "Internal server error"
   });
 });
 
 // ======================
-// START SERVER
-// ======================
 const PORT = process.env.PORT || 3000;
-
 app.listen(PORT, () => {
-  console.log(`🚀 Trivexa Pay running on port ${PORT}`);
+  console.log(`🚀 Trivexa Pay running on ${PORT}`);
 });
