@@ -2,19 +2,24 @@ import { useEffect, useState } from "react";
 import API from "../api";
 
 export default function Tasks() {
-  const [data, setData] = useState(null);
+  const [tasks, setTasks] = useState([]);
 
   useEffect(() => {
-    API.get("/tasks").then(res => setData(res.data));
+    API.get("/tasks").then(res => {
+      setTasks(res.data);
+    });
   }, []);
-
-  if (!data) return <p>Loading...</p>;
 
   return (
     <div>
-      <h2>🧩 Tasks</h2>
+      <h2>Tasks</h2>
 
-      <pre>{JSON.stringify(data, null, 2)}</pre>
+      {tasks.map(t => (
+        <div key={t.id}>
+          <p>{t.title}</p>
+          <p>₦{t.reward}</p>
+        </div>
+      ))}
     </div>
   );
-}
+                 }
