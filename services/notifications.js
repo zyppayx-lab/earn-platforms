@@ -1,27 +1,47 @@
-const admin = require("firebase-admin");
 const db = require("../db");
+const redis = require("./redis");
 
-// init firebase
-admin.initializeApp({
-  credential: admin.credential.cert(
-    JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT)
-  )
-});
-
-async function sendPush(userId, title, body) {
-  const tokens = await db.query(
-    "SELECT token FROM device_tokens WHERE user_id=$1",
-    [userId]
+// ======================
+// SAVE NOTIFICATION (DB)
+// ======================
+async function saveNotification(userId, title, body, type = "info") {
+  await db.query(
+    `INSERT INTO notifications (user_id, title, body, type)
+     VALUES ($1,$2,$3,$4)`,
+    [userId, title, body, type]
   );
-
-  if (!tokens.rows.length) return;
-
-  const message = {
-    notification: { title, body },
-    tokens: tokens.rows.map(t => t.token)
-  };
-
-  await admin.messaging().sendMulticast(message);
 }
 
-module.exports = { sendPush };
+// ======================
+// REAL-TIME PUSH (REDIS + SSE)
+// ======================
+async function pushRealtime(userId, payload) {
+  await redis.publish(
+    "user_notification",
+    JSON.stringify({
+      userId,
+      ...payload,
+      timestamp: new Date().toISOString()
+    })
+  );
+}
+
+// ======================
+// MAIN NOTIFICATION FUNCTION
+// ======================
+async function sendNotification(userId, title, body, type = "info") {
+  try {
+    // 1. Save to database (persistent)
+    await saveNotification(userId, title, body, type);
+
+    // 2. Push real-time event
+    await pushRealtime(userId, { title, body, type });
+
+  } catch (err) {
+    console.error("Notification error:", err.message);
+  }
+}
+
+module.exports = {
+  sendNotification
+};
