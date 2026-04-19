@@ -1,18 +1,38 @@
 module.exports = (permission) => {
   return (req, res, next) => {
+    const user = req.user;
 
-    if (!req.user) {
+    if (!user) {
       return res.status(401).json({ error: "Unauthorized" });
     }
 
-    // 👑 SUPER ADMIN FULL ACCESS
-    if (req.user.role === "super_admin") {
+    // ======================
+    // SUPER ADMIN OVERRIDE
+    // ======================
+    if (user.role === "super_admin") {
       return next();
     }
 
-    const perms = req.user.permissions || {};
+    // ======================
+    // VALIDATION SAFETY
+    // ======================
+    if (!permission || typeof permission !== "string") {
+      return res.status(500).json({
+        error: "Invalid permission configuration"
+      });
+    }
 
-    if (!perms[permission]) {
+    const perms = user.permissions;
+
+    // ======================
+    // PERMISSION CHECK
+    // ======================
+    const hasPermission =
+      Array.isArray(perms)
+        ? perms.includes(permission)
+        : perms && perms[permission] === true;
+
+    if (!hasPermission) {
       return res.status(403).json({
         error: "Permission denied"
       });
