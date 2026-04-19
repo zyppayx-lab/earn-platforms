@@ -1,16 +1,20 @@
 const db = require("../db");
 const redis = require("redis");
 
-const client = redis.createClient();
+const client = redis.createClient({
+  url: process.env.REDIS_URL
+});
+
 client.connect();
 
 // ======================
 // PROCESS REFERRAL BONUS
 // ======================
 async function processReferralBonus(userId) {
+  const lockKey = `ref_bonus:${userId}`;
+
   try {
-    // 🔒 prevent duplicate processing (VERY IMPORTANT)
-    const lockKey = `ref_bonus:${userId}`;
+    // 🔒 prevent duplicate processing
     const locked = await client.get(lockKey);
 
     if (locked) return;
@@ -25,11 +29,17 @@ async function processReferralBonus(userId) {
       [userId]
     );
 
-    if (!user.rows.length) return;
+    if (!user.rows.length) {
+      await client.del(lockKey);
+      return;
+    }
 
     const refCode = user.rows[0].referred_by;
 
-    if (!refCode) return;
+    if (!refCode) {
+      await client.del(lockKey);
+      return;
+    }
 
     // ======================
     // FIND REFERRER
@@ -39,44 +49,52 @@ async function processReferralBonus(userId) {
       [refCode]
     );
 
-    if (!referrer.rows.length) return;
+    if (!referrer.rows.length) {
+      await client.del(lockKey);
+      return;
+    }
 
     const referrerId = referrer.rows[0].id;
 
-    // ======================
-    // PREVENT SELF-REFERRAL
-    // ======================
-    if (referrerId === userId) return;
+    // prevent self referral
+    if (referrerId === userId) {
+      await client.del(lockKey);
+      return;
+    }
 
     // ======================
     // CHECK IF ALREADY PAID
     // ======================
     const exists = await db.query(
-      "SELECT * FROM referrals WHERE referred_id=$1",
+      "SELECT id FROM referrals WHERE referred_id=$1",
       [userId]
     );
 
-    if (exists.rows.length) return;
+    if (exists.rows.length) {
+      await client.del(lockKey);
+      return;
+    }
 
     // ======================
-    // TASK COMPLETION RULE (IMPORTANT FIX)
+    // TASK COMPLETION RULE
     // ======================
     const taskCheck = await db.query(
       `SELECT COUNT(*) FROM task_submissions
-       WHERE user_id=$1
-       AND status='approved'`,
+       WHERE user_id=$1 AND status='approved'`,
       [userId]
     );
 
-    const completedTasks = parseInt(taskCheck.rows[0].count);
+    const completedTasks = Number(taskCheck.rows[0].count);
 
-    // MUST COMPLETE AT LEAST 2 TASKS
-    if (completedTasks < 2) return;
+    if (completedTasks < 2) {
+      await client.del(lockKey);
+      return;
+    }
 
     // ======================
-    // BONUS AMOUNT (CONFIGURABLE READY)
+    // BONUS CONFIG
     // ======================
-    const BONUS_AMOUNT = process.env.REFERRAL_BONUS || 200;
+    const BONUS_AMOUNT = Number(process.env.REFERRAL_BONUS || 200);
 
     await db.query("BEGIN");
 
@@ -88,7 +106,7 @@ async function processReferralBonus(userId) {
       [BONUS_AMOUNT, referrerId]
     );
 
-    // log referral
+    // referral log
     await db.query(
       `INSERT INTO referrals (referrer_id, referred_id, bonus_paid)
        VALUES ($1,$2,true)`,
@@ -104,11 +122,14 @@ async function processReferralBonus(userId) {
 
     await db.query("COMMIT");
 
-    // release lock
     await client.del(lockKey);
 
   } catch (err) {
     await db.query("ROLLBACK");
+
+    // 🔥 ALWAYS CLEAN LOCK
+    await client.del(lockKey);
+
     console.error("Referral bonus error:", err);
   }
 }
