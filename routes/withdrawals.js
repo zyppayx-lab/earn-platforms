@@ -2,33 +2,35 @@ const router = require("express").Router();
 const auth = require("../middleware/auth");
 const admin = require("../middleware/admin");
 const db = require("../db");
+const { logAction } = require("../services/audit");
 
 // ======================
-// REQUEST WITHDRAWAL (USER)
+// REQUEST WITHDRAWAL
 // ======================
 router.post("/request", auth, async (req, res) => {
-  const { amount, bank_name, account_number } = req.body;
+  const { amount } = req.body;
 
   try {
-    const userId = req.user.id;
-
-    // check balance
     const user = await db.query(
       "SELECT balance FROM users WHERE id=$1",
-      [userId]
+      [req.user.id]
     );
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: "Invalid amount" });
+    }
 
     if (user.rows[0].balance < amount) {
       return res.status(400).json({ error: "Insufficient balance" });
     }
 
-    const withdrawal = await db.query(
-      `INSERT INTO withdrawals (user_id, amount, bank_name, account_number, status)
-       VALUES ($1,$2,$3,$4,'pending') RETURNING *`,
-      [userId, amount, bank_name, account_number]
+    const wd = await db.query(
+      `INSERT INTO withdrawals (user_id, amount, status)
+       VALUES ($1,$2,'pending') RETURNING *`,
+      [req.user.id, amount]
     );
 
-    res.json(withdrawal.rows[0]);
+    res.json(wd.rows[0]);
 
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -36,57 +38,101 @@ router.post("/request", auth, async (req, res) => {
 });
 
 // ======================
-// GET USER WITHDRAWALS
-// ======================
-router.get("/", auth, async (req, res) => {
-  const data = await db.query(
-    "SELECT * FROM withdrawals WHERE user_id=$1",
-    [req.user.id]
-  );
-
-  res.json(data.rows);
-});
-
-// ======================
-// ADMIN: VIEW ALL
-// ======================
-router.get("/admin", auth, admin("admin"), async (req, res) => {
-  const data = await db.query("SELECT * FROM withdrawals ORDER BY created_at DESC");
-  res.json(data.rows);
-});
-
-// ======================
-// ADMIN: APPROVE
+// APPROVE WITHDRAWAL
 // ======================
 router.post("/approve", auth, admin("admin"), async (req, res) => {
-  const { withdrawal_id } = req.body;
+  const { id } = req.body;
+
+  const wdCheck = await db.query(
+    "SELECT * FROM withdrawals WHERE id=$1",
+    [id]
+  );
+
+  if (!wdCheck.rows.length) {
+    return res.status(404).json({ error: "Withdrawal not found" });
+  }
+
+  if (wdCheck.rows[0].status !== "pending") {
+    return res.status(400).json({ error: "Already processed" });
+  }
 
   const wd = await db.query(
-    "UPDATE withdrawals SET status='approved' WHERE id=$1 RETURNING *",
-    [withdrawal_id]
+    `UPDATE withdrawals 
+     SET status='approved'
+     WHERE id=$1
+     RETURNING *`,
+    [id]
   );
+
+  await logAction(req.user.id, "withdrawal_approved", wd.rows[0]);
 
   res.json(wd.rows[0]);
 });
 
 // ======================
-// ADMIN: MARK PAID (after manual transfer)
+// MARK AS PAID (SAFE FINANCIAL TRANSACTION)
 // ======================
 router.post("/paid", auth, admin("admin"), async (req, res) => {
-  const { withdrawal_id } = req.body;
+  const { id } = req.body;
 
-  const wd = await db.query(
-    "UPDATE withdrawals SET status='paid' WHERE id=$1 RETURNING *",
-    [withdrawal_id]
-  );
+  const client = await db.query("BEGIN");
 
-  // deduct wallet
-  await db.query(
-    "UPDATE users SET balance = balance - $1 WHERE id=$2",
-    [wd.rows[0].amount, wd.rows[0].user_id]
-  );
+  try {
+    const wdRes = await db.query(
+      "SELECT * FROM withdrawals WHERE id=$1",
+      [id]
+    );
 
-  res.json({ message: "Marked as paid" });
+    if (!wdRes.rows.length) {
+      throw new Error("Withdrawal not found");
+    }
+
+    const wd = wdRes.rows[0];
+
+    if (wd.status !== "approved") {
+      throw new Error("Withdrawal not approved");
+    }
+
+    // prevent double processing
+    if (wd.status === "paid") {
+      throw new Error("Already paid");
+    }
+
+    // update withdrawal
+    await db.query(
+      "UPDATE withdrawals SET status='paid' WHERE id=$1",
+      [id]
+    );
+
+    // deduct wallet
+    await db.query(
+      `UPDATE users 
+       SET balance = balance - $1
+       WHERE id=$2`,
+      [wd.amount, wd.user_id]
+    );
+
+    // ledger entry (IMPORTANT)
+    await db.query(
+      `INSERT INTO transaction_ledger (user_id, type, amount)
+       VALUES ($1,'withdrawal',$2)`,
+      [wd.user_id, wd.amount]
+    );
+
+    await logAction(req.user.id, "withdrawal_paid", {
+      withdrawal_id: id,
+      amount: wd.amount,
+      user_id: wd.user_id
+    });
+
+    await db.query("COMMIT");
+
+    res.json({ message: "Paid successfully" });
+
+  } catch (err) {
+    await db.query("ROLLBACK");
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
