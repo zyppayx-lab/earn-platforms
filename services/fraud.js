@@ -1,24 +1,39 @@
 const db = require("../db");
 const redis = require("redis");
 
-const client = redis.createClient();
+const client = redis.createClient({
+  url: process.env.REDIS_URL
+});
+
 client.connect();
+
+// ======================
+// THRESHOLDS (EASY TUNING LATER)
+// ======================
+const THRESHOLDS = {
+  TASK_LOW: 5,
+  TASK_HIGH: 15,
+  WITHDRAWAL_LIMIT: 3,
+  RISK_RESTRICT: 70,
+  RISK_FREEZE: 90
+};
 
 // ======================
 // FRAUD RISK ENGINE
 // ======================
 async function detectFraud(userId) {
   const user = await db.query(
-    "SELECT * FROM users WHERE id=$1",
+    "SELECT id, email FROM users WHERE id=$1",
     [userId]
   );
 
   if (!user.rows.length) return 0;
 
   let risk = 0;
+  const email = user.rows[0].email;
 
   // ======================
-  // RULE 1: TASK ABUSE (TIME-BASED)
+  // RULE 1: TASK ABUSE (TIME WINDOW)
   // ======================
   const recentTasks = await db.query(
     `SELECT COUNT(*) FROM task_submissions
@@ -27,42 +42,48 @@ async function detectFraud(userId) {
     [userId]
   );
 
-  const taskCount = parseInt(recentTasks.rows[0].count);
+  const taskCount = Number(recentTasks.rows[0].count);
 
-  if (taskCount > 5) risk += 30;
-  if (taskCount > 15) risk += 50;
+  if (taskCount > THRESHOLDS.TASK_LOW) risk += 30;
+  if (taskCount > THRESHOLDS.TASK_HIGH) risk += 50;
 
   // ======================
-  // RULE 2: RAPID WALLET ACTIVITY (REDIS TRACKING)
+  // RULE 2: WALLET ACTIVITY (REDIS TRACKING)
   // ======================
   const key = `wallet_activity:${userId}`;
-  const activity = await client.get(key);
+  const raw = await client.get(key);
 
-  if (activity) {
-    const data = JSON.parse(activity);
+  let activityCount = 0;
 
-    if (data.count > 10) risk += 30;
-    if (data.count > 20) risk += 50;
+  if (raw) {
+    try {
+      const data = JSON.parse(raw);
+      activityCount = data.count || 0;
+    } catch (e) {
+      activityCount = 0;
+    }
   }
 
-  // update activity tracker
+  activityCount += 1;
+
   await client.set(
     key,
-    JSON.stringify({ count: (activity ? JSON.parse(activity).count : 0) + 1 }),
+    JSON.stringify({ count: activityCount }),
     { EX: 3600 }
   );
 
-  // ======================
-  // RULE 3: MULTI ACCOUNT SIGNAL (WEAK SIGNAL IMPROVED)
-  // ======================
-  const email = user.rows[0].email;
+  if (activityCount > 10) risk += 30;
+  if (activityCount > 20) risk += 50;
 
+  // ======================
+  // RULE 3: MULTI ACCOUNT SIGNAL
+  // ======================
   if (email.includes("+")) {
     risk += 15;
   }
 
   // ======================
-  // RULE 4: LOW BALANCE ABUSE PATTERN
+  // RULE 4: WITHDRAWAL ABUSE
   // ======================
   const withdrawals = await db.query(
     `SELECT COUNT(*) FROM withdrawals
@@ -71,15 +92,16 @@ async function detectFraud(userId) {
     [userId]
   );
 
-  if (parseInt(withdrawals.rows[0].count) > 3) {
+  const withdrawalCount = Number(withdrawals.rows[0].count);
+
+  if (withdrawalCount > THRESHOLDS.WITHDRAWAL_LIMIT) {
     risk += 40;
   }
 
   // ======================
   // FINAL DECISION LOGIC
   // ======================
-
-  if (risk >= 70 && risk < 90) {
+  if (risk >= THRESHOLDS.RISK_RESTRICT && risk < THRESHOLDS.RISK_FREEZE) {
     await db.query(
       `UPDATE users SET status='restricted' WHERE id=$1`,
       [userId]
@@ -92,7 +114,7 @@ async function detectFraud(userId) {
     );
   }
 
-  if (risk >= 90) {
+  if (risk >= THRESHOLDS.RISK_FREEZE) {
     await db.query(
       `UPDATE users SET status='frozen' WHERE id=$1`,
       [userId]
