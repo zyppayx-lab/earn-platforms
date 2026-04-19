@@ -3,8 +3,8 @@ const escrow = require("../services/escrow");
 
 const { detectFraud } = require("../services/fraud");
 const { processReferralBonus } = require("../services/referralBonus");
-const { sendPush } = require("../services/notifications");
-const { publishEvent } = require("../services/events");
+const { sendNotification } = require("../services/notifications");
+const { publishEvent, publishDashboardUpdate } = require("../services/events");
 
 // ======================
 // CREATE TASK (VENDOR)
@@ -16,7 +16,6 @@ exports.createTask = async (req, res) => {
   try {
     const totalCost = reward * total_slots;
 
-    // check vendor balance
     const vendor = await db.query(
       "SELECT balance FROM vendors WHERE id=$1",
       [vendorId]
@@ -51,10 +50,15 @@ exports.createTask = async (req, res) => {
 
     await db.query("COMMIT");
 
-    // notify users
-    await publishEvent("update", {
-      title: "New Task Available",
-      message: "Start earning now"
+    // ======================
+    // REAL-TIME EVENTS
+    // ======================
+    await publishEvent("new_task", {
+      task: task.rows[0]
+    });
+
+    await publishDashboardUpdate({
+      source: "task_created"
     });
 
     res.json(task.rows[0]);
@@ -89,6 +93,10 @@ exports.submitTask = async (req, res) => {
       [task_id, userId, proof]
     );
 
+    await publishDashboardUpdate({
+      source: "task_submission"
+    });
+
     res.json({ message: "Task submitted" });
 
   } catch (err) {
@@ -122,6 +130,7 @@ exports.approveTask = async (req, res) => {
     );
 
     const reward = task.rows[0].reward;
+    const userId = sub.rows[0].user_id;
 
     await db.query("BEGIN");
 
@@ -136,7 +145,7 @@ exports.approveTask = async (req, res) => {
     // release escrow + credit user
     await escrow.releaseEscrow(
       sub.rows[0].task_id,
-      sub.rows[0].user_id,
+      userId,
       reward
     );
 
@@ -144,27 +153,37 @@ exports.approveTask = async (req, res) => {
     await db.query(
       `INSERT INTO transactions (user_id, type, amount)
        VALUES ($1,'task_reward',$2)`,
-      [sub.rows[0].user_id, reward]
+      [userId, reward]
     );
 
     await db.query("COMMIT");
 
     // ======================
-    // HOOKS
+    // BACKEND HOOKS
     // ======================
-    await detectFraud(sub.rows[0].user_id);
-    await processReferralBonus(sub.rows[0].user_id);
+    await detectFraud(userId);
+    await processReferralBonus(userId);
 
-    await sendPush(
-      sub.rows[0].user_id,
+    // ======================
+    // NOTIFICATIONS
+    // ======================
+    await sendNotification(
+      userId,
       "Task Approved 🎉",
-      `You earned ₦${reward}`
+      `You earned ₦${reward}`,
+      "success"
     );
 
-    await publishEvent("update", {
-      userId: sub.rows[0].user_id,
-      title: "Task Approved",
-      message: `You earned ₦${reward}`
+    // ======================
+    // REAL-TIME EVENTS
+    // ======================
+    await publishEvent("task_approved", {
+      userId,
+      reward
+    });
+
+    await publishDashboardUpdate({
+      source: "task_approved"
     });
 
     res.json({ message: "Task approved" });
