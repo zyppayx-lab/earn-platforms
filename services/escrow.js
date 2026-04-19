@@ -1,17 +1,23 @@
 const db = require("../db");
 const redis = require("redis");
 
-// assume redis client already configured elsewhere
-const client = redis.createClient();
+// ======================
+// REDIS CLIENT (SAFE INIT)
+// ======================
+const client = redis.createClient({
+  url: process.env.REDIS_URL
+});
+
 client.connect();
 
 // ======================
 // CREATE ESCROW (LOCK FUNDS)
 // ======================
 async function createEscrow(userId, taskId, amount) {
-  // prevent duplicate escrow (important)
+
+  // 🔒 DB-level protection (prevents duplicates)
   const existing = await db.query(
-    `SELECT * FROM escrow 
+    `SELECT id FROM escrow 
      WHERE task_id=$1 AND status='locked'`,
     [taskId]
   );
@@ -20,43 +26,62 @@ async function createEscrow(userId, taskId, amount) {
     throw new Error("Escrow already exists for this task");
   }
 
-  const escrow = await db.query(
-    `INSERT INTO escrow (user_id, task_id, amount, status)
-     VALUES ($1,$2,$3,'locked')
-     RETURNING *`,
-    [userId, taskId, amount]
-  );
+  await db.query("BEGIN");
 
-  // store lock in Redis (prevents race conditions)
-  await client.set(
-    `escrow:${taskId}`,
-    JSON.stringify({
-      userId,
-      amount,
-      status: "locked"
-    }),
-    { EX: 3600 }
-  );
+  try {
+    // create escrow in DB
+    const escrow = await db.query(
+      `INSERT INTO escrow (user_id, task_id, amount, status)
+       VALUES ($1,$2,$3,'locked')
+       RETURNING *`,
+      [userId, taskId, amount]
+    );
 
-  return escrow.rows[0];
+    const escrowId = escrow.rows[0].id;
+
+    // 🔒 Redis lock (fast lookup + race protection)
+    await client.set(
+      `escrow:${taskId}`,
+      JSON.stringify({
+        escrowId,
+        userId,
+        amount,
+        status: "locked"
+      }),
+      {
+        EX: 3600 // 1 hour expiry safety
+      }
+    );
+
+    await db.query("COMMIT");
+
+    return escrow.rows[0];
+
+  } catch (err) {
+    await db.query("ROLLBACK");
+    throw err;
+  }
 }
 
 // ======================
-// RELEASE ESCROW (SAFE + ATOMIC)
+// RELEASE ESCROW (ATOMIC + SAFE)
 // ======================
 async function releaseEscrow(escrowId, userId, amount) {
-  const redisKey = `escrow-release:${escrowId}`;
 
-  // 🔒 IDENTITY LOCK (prevents double payout)
-  const lock = await client.get(redisKey);
-  if (lock) {
+  const lockKey = `escrow-release:${escrowId}`;
+
+  // 🔒 prevent double execution
+  const existingLock = await client.get(lockKey);
+
+  if (existingLock) {
     throw new Error("Escrow already processing");
   }
 
-  await client.set(redisKey, "locked", { EX: 30 });
+  await client.set(lockKey, "locked", { EX: 30 });
+
+  await db.query("BEGIN");
 
   try {
-    await db.query("BEGIN");
 
     // 1. verify escrow
     const escrow = await db.query(
@@ -69,12 +94,12 @@ async function releaseEscrow(escrowId, userId, amount) {
       throw new Error("Escrow not found or already released");
     }
 
-    // 2. ownership check
+    // 2. ownership validation
     if (escrow.rows[0].user_id !== userId) {
       throw new Error("Unauthorized escrow release");
     }
 
-    // 3. update escrow
+    // 3. update escrow status
     await db.query(
       `UPDATE escrow 
        SET status='released'
@@ -82,7 +107,7 @@ async function releaseEscrow(escrowId, userId, amount) {
       [escrowId]
     );
 
-    // 4. credit wallet
+    // 4. credit user wallet
     await db.query(
       `UPDATE users 
        SET balance = balance + $1
@@ -90,7 +115,7 @@ async function releaseEscrow(escrowId, userId, amount) {
       [amount, userId]
     );
 
-    // 5. unified transaction log (IMPORTANT FIX)
+    // 5. transaction log (standardized)
     await db.query(
       `INSERT INTO transactions (user_id, type, amount)
        VALUES ($1,'task_reward',$2)`,
@@ -99,14 +124,15 @@ async function releaseEscrow(escrowId, userId, amount) {
 
     await db.query("COMMIT");
 
-    // remove redis lock
-    await client.del(redisKey);
+    // cleanup redis lock
+    await client.del(lockKey);
 
     return { success: true };
 
   } catch (err) {
     await db.query("ROLLBACK");
-    await client.del(redisKey);
+
+    await client.del(lockKey);
     throw err;
   }
 }
