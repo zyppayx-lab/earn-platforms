@@ -7,21 +7,27 @@ dotenv.config();
 const app = express();
 
 // ======================
-// 🔐 PAYSTACK WEBHOOK RAW BODY (MUST BE FIRST)
+// JSON PARSER
 // ======================
-app.use(bodyParser.json({
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// ======================
+// PAYSTACK WEBHOOK RAW BODY
+// ======================
+app.use("/webhook", bodyParser.json({
   verify: (req, res, buf) => {
     req.rawBody = buf;
   }
 }));
 
 // ======================
-// ⏱ START BACKGROUND JOBS
+// BACKGROUND JOBS
 // ======================
 require("./services/scheduler");
 
 // ======================
-// 🛡️ BASIC SECURITY HEADERS
+// SECURITY HEADERS
 // ======================
 app.use((req, res, next) => {
   res.setHeader("X-Powered-By", "Trivexa Pay");
@@ -31,7 +37,7 @@ app.use((req, res, next) => {
 });
 
 // ======================
-// 🧾 REQUEST LOGGER
+// REQUEST LOGGER
 // ======================
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
@@ -39,69 +45,73 @@ app.use((req, res, next) => {
 });
 
 // ======================
-// 📡 ROUTES
+// ROUTES (FULL SYSTEM)
 // ======================
 
-// 🔴 WEBHOOK (Paystack)
-app.use("/webhook", require("./routes/webhook"));
-
-// 🔐 AUTH
+// AUTH
 app.use("/auth", require("./routes/auth"));
 
-// 💰 WALLET
+// WALLET
 app.use("/wallet", require("./routes/wallet"));
 
-// 💳 PAYMENTS
+// PAYMENTS
 app.use("/payments", require("./routes/payments"));
 
-// 🧩 TASK SYSTEM
+// TASK SYSTEM
 app.use("/tasks", require("./routes/tasks"));
 
-// 👑 ADMIN CONTROL
+// VENDOR SYSTEM
+app.use("/vendor", require("./routes/vendor"));
+
+// ESCROW SYSTEM (NEW)
+app.use("/escrow", require("./routes/escrow"));
+
+// ADMIN
 app.use("/admin", require("./routes/admin"));
 
-// 📊 ANALYTICS
+// ANALYTICS
 app.use("/admin-analytics", require("./routes/adminAnalytics"));
 
-// ⚡ REAL-TIME EVENTS
+// REALTIME
 app.use("/realtime", require("./routes/realtime"));
 
+// WEBHOOK
+app.use("/webhook", require("./routes/webhook"));
+
 // ======================
-// ❤️ HEALTH CHECK
+// HEALTH CHECK
 // ======================
 app.get("/", (req, res) => {
   res.json({
     app: "Trivexa Pay",
     status: "running",
-    version: "1.6.0"
+    version: "1.7.0",
+    modules: ["users", "vendors", "escrow", "admin"]
   });
 });
 
 // ======================
-// ❌ 404 HANDLER
+// 404
 // ======================
 app.use((req, res) => {
-  res.status(404).json({
-    error: "Route not found"
-  });
+  res.status(404).json({ error: "Route not found" });
 });
 
 // ======================
-// 🚨 GLOBAL ERROR HANDLER
+// ERROR HANDLER
 // ======================
 app.use((err, req, res, next) => {
   console.error("SERVER ERROR:", err);
-
-  res.status(err.status || 500).json({
-    error: err.message || "Internal server error"
-  });
+  res.status(500).json({ error: err.message });
 });
 
 // ======================
-// 🚀 START SERVER
+// START SERVER
 // ======================
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
   console.log(`🚀 Trivexa Pay running on port ${PORT}`);
+  console.log(`💰 Escrow System ACTIVE`);
+  console.log(`🧑‍💼 Vendor System ACTIVE`);
 });
