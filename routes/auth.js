@@ -10,11 +10,21 @@ router.post("/register", async (req, res) => {
   const { email, password, referred_by } = req.body;
 
   try {
+    // check duplicate user
+    const existing = await db.query(
+      "SELECT id FROM users WHERE email=$1",
+      [email]
+    );
+
+    if (existing.rows.length > 0) {
+      return res.status(400).json({ error: "Email already exists" });
+    }
+
     const hashed = await bcrypt.hash(password, 10);
 
     const result = await db.query(
-      `INSERT INTO users (email, password, referred_by)
-       VALUES ($1,$2,$3)
+      `INSERT INTO users (email, password, referred_by, role, status)
+       VALUES ($1,$2,$3,'user','active')
        RETURNING id, email, role`,
       [email, hashed, referred_by || null]
     );
@@ -42,7 +52,18 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ error: "User not found" });
     }
 
-    const valid = await bcrypt.compare(password, user.rows[0].password);
+    const u = user.rows[0];
+
+    // ❌ BLOCK SUSPENDED USERS
+    if (u.status === "suspended") {
+      return res.status(403).json({ error: "Account suspended" });
+    }
+
+    if (u.status === "frozen") {
+      return res.status(403).json({ error: "Account frozen" });
+    }
+
+    const valid = await bcrypt.compare(password, u.password);
 
     if (!valid) {
       return res.status(400).json({ error: "Wrong password" });
@@ -50,9 +71,9 @@ router.post("/login", async (req, res) => {
 
     const token = jwt.sign(
       {
-        id: user.rows[0].id,
-        email: user.rows[0].email,
-        role: user.rows[0].role
+        id: u.id,
+        email: u.email,
+        role: u.role
       },
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
@@ -60,7 +81,8 @@ router.post("/login", async (req, res) => {
 
     res.json({
       token,
-      role: user.rows[0].role
+      role: u.role,
+      status: u.status
     });
 
   } catch (err) {
