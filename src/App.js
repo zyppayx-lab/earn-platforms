@@ -1,26 +1,26 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import Dashboard from "./pages/Dashboard";
-import Users from "./pages/Users";
-import Finance from "./pages/Finance";
-import Tasks from "./pages/Tasks";
-import Fraud from "./pages/Fraud";
-import Sidebar from "./components/Sidebar";
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
 
-export default function App() {
+import Login from "./pages/Login";
+import Dashboard from "./pages/Dashboard";
+import AdminDashboard from "./pages/AdminDashboard";
+import Tasks from "./pages/Tasks";
+
+function App() {
   return (
-    <BrowserRouter>
-      <div style={{ display: "flex" }}>
-        <Sidebar />
-        <div style={{ padding: 20, width: "100%" }}>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/users" element={<Users />} />
-            <Route path="/finance" element={<Finance />} />
-            <Route path="/tasks" element={<Tasks />} />
-            <Route path="/fraud" element={<Fraud />} />
-          </Routes>
-        </div>
-      </div>
-    </BrowserRouter>
+    <Router>
+      <Routes>
+
+        <Route path="/" element={<Login />} />
+
+        <Route path="/dashboard" element={<Dashboard />} />
+
+        <Route path="/admin" element={<AdminDashboard />} />
+
+        <Route path="/tasks" element={<Tasks />} />
+
+      </Routes>
+    </Router>
   );
 }
+
+export default App;
