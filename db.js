@@ -1,40 +1,38 @@
 const { Pool } = require("pg");
 
-// ======================
-// DATABASE CONNECTION
-// ======================
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 
-  // 🔐 REQUIRED FOR SUPABASE / RENDER
   ssl: {
     rejectUnauthorized: false
   },
 
-  max: 20, // max connections
+  max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 20000
 });
 
 // ======================
-// QUERY HELPER
+// QUERY
 // ======================
-const query = (text, params) => pool.query(text, params);
+const query = (text, params) => {
+  return pool.query(text, params);
+};
 
 // ======================
-// CONNECTION TEST
+// HEALTH CHECK
 // ======================
 pool.connect()
   .then(client => {
-    console.log("✅ PostgreSQL connected");
+    console.log("✅ Database connected");
     client.release();
   })
   .catch(err => {
-    console.error("❌ DB connection error:", err);
+    console.error("❌ DB Error:", err);
   });
 
 // ======================
-// ERROR HANDLING
+// ERROR LISTENER
 // ======================
 pool.on("error", (err) => {
   console.error("Unexpected DB error:", err);
