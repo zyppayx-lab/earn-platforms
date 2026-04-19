@@ -1,115 +1,32 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+import Sidebar from "./components/Sidebar";
 
-// Pages
-import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
-import Tasks from "./pages/Tasks";
-
-import AdminDashboard from "./pages/AdminDashboard";
+import Users from "./pages/Users";
 import Finance from "./pages/Finance";
 import Fraud from "./pages/Fraud";
-import Users from "./pages/Users";
+import Tasks from "./pages/Tasks";
+import Escrow from "./pages/Escrow";
 
-// ======================
-// 🔐 PROTECTED ROUTE
-// ======================
-const ProtectedRoute = ({ children }) => {
-  const token = localStorage.getItem("token");
-
-  return token ? children : <Navigate to="/" />;
-};
-
-// ======================
-// 👑 ADMIN ROUTE
-// ======================
-const AdminRoute = ({ children }) => {
-  const role = localStorage.getItem("role"); // optional (if you store it)
-
-  const token = localStorage.getItem("token");
-
-  if (!token) return <Navigate to="/" />;
-
-  // simple check (backend still enforces real security)
-  if (!role || role === "user") {
-    return <Navigate to="/dashboard" />;
-  }
-
-  return children;
-};
-
-// ======================
-// APP
-// ======================
-function App() {
+export default function App() {
   return (
-    <Router>
-      <Routes>
+    <BrowserRouter>
+      <div style={{ display: "flex" }}>
+        
+        <Sidebar />
 
-        {/* PUBLIC */}
-        <Route path="/" element={<Login />} />
+        <div style={{ flex: 1, padding: 20 }}>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/users" element={<Users />} />
+            <Route path="/finance" element={<Finance />} />
+            <Route path="/fraud" element={<Fraud />} />
+            <Route path="/tasks" element={<Tasks />} />
+            <Route path="/escrow" element={<Escrow />} />
+          </Routes>
+        </div>
 
-        {/* USER */}
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute>
-              <Dashboard />
-            </ProtectedRoute>
-          }
-        />
-
-        <Route
-          path="/tasks"
-          element={
-            <ProtectedRoute>
-              <Tasks />
-            </ProtectedRoute>
-          }
-        />
-
-        {/* ADMIN */}
-        <Route
-          path="/admin"
-          element={
-            <AdminRoute>
-              <AdminDashboard />
-            </AdminRoute>
-          }
-        />
-
-        <Route
-          path="/admin/finance"
-          element={
-            <AdminRoute>
-              <Finance />
-            </AdminRoute>
-          }
-        />
-
-        <Route
-          path="/admin/fraud"
-          element={
-            <AdminRoute>
-              <Fraud />
-            </AdminRoute>
-          }
-        />
-
-        <Route
-          path="/admin/users"
-          element={
-            <AdminRoute>
-              <Users />
-            </AdminRoute>
-          }
-        />
-
-        {/* FALLBACK */}
-        <Route path="*" element={<Navigate to="/" />} />
-
-      </Routes>
-    </Router>
+      </div>
+    </BrowserRouter>
   );
-}
-
-export default App;
+  }
