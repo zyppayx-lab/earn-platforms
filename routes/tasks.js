@@ -2,6 +2,7 @@ const router = require("express").Router();
 
 const auth = require("../middleware/auth");
 const admin = require("../middleware/admin");
+const vendor = require("../middleware/vendor");
 
 const {
   createTask,
@@ -10,12 +11,12 @@ const {
 } = require("../controllers/taskController");
 
 // ======================
-// CREATE TASK (ADMIN ONLY)
+// CREATE TASK (VENDOR)
 // ======================
 router.post(
   "/create",
   auth,
-  admin("admin", "super_admin"),
+  vendor,
   createTask
 );
 
