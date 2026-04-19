@@ -4,27 +4,45 @@ import API from "../api";
 export default function Users() {
   const [users, setUsers] = useState([]);
 
-  useEffect(() => {
-    API.get("/users").then(res => setUsers(res.data));
-  }, []);
+  const load = () => {
+    API.get("/admin/users")
+      .then(res => setUsers(res.data))
+      .catch(() => alert("No access"));
+  };
 
   const suspendUser = async (id) => {
-    await API.post("/suspend-user", { userId: id });
-    alert("User suspended");
+    await API.post("/admin/suspend-user", { user_id: id });
+    load();
   };
+
+  const freezeUser = async (id) => {
+    await API.post("/admin/freeze-user", { user_id: id });
+    load();
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
 
   return (
     <div>
-      <h2>👥 Users</h2>
+      <h2>👥 User Management</h2>
 
-      {users.map(u => (
-        <div key={u.id} style={{ border: "1px solid #ccc", margin: 10, padding: 10 }}>
-          <p>{u.email}</p>
-          <p>Balance: {u.balance}</p>
-          <p>Fraud Score: {u.fraud_score}</p>
-          <button onClick={() => suspendUser(u.id)}>Suspend</button>
+      {users.map((u) => (
+        <div key={u.id} style={{ border: "1px solid #ccc", margin: "10px", padding: "10px" }}>
+          <p>Email: {u.email}</p>
+          <p>Balance: ₦{u.balance}</p>
+          <p>Status: {u.status}</p>
+
+          <button onClick={() => suspendUser(u.id)}>
+            Suspend
+          </button>
+
+          <button onClick={() => freezeUser(u.id)}>
+            Freeze
+          </button>
         </div>
       ))}
     </div>
   );
-}
+    }
