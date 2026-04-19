@@ -1,4 +1,6 @@
 const db = require("../db");
+const { publishDashboardUpdate, publishEvent } = require("../services/events");
+const { logAction } = require("../services/audit");
 
 // ======================
 // 📊 DASHBOARD
@@ -10,9 +12,9 @@ exports.getDashboard = async (req, res) => {
     const tasks = await db.query("SELECT COUNT(*) FROM tasks");
 
     res.json({
-      users: users.rows[0].count,
-      vendors: vendors.rows[0].count,
-      tasks: tasks.rows[0].count
+      users: Number(users.rows[0].count),
+      vendors: Number(vendors.rows[0].count),
+      tasks: Number(tasks.rows[0].count)
     });
 
   } catch (err) {
@@ -21,7 +23,7 @@ exports.getDashboard = async (req, res) => {
 };
 
 // ======================
-// 👑 CREATE ADMIN (SUPER ADMIN ONLY)
+// 👑 CREATE ADMIN
 // ======================
 exports.createAdmin = async (req, res) => {
   const { email, role, permissions } = req.body;
@@ -32,6 +34,12 @@ exports.createAdmin = async (req, res) => {
        VALUES ($1,$2,$3)`,
       [email, role, permissions || []]
     );
+
+    await logAction(req.user.id, "CREATE_ADMIN", { email, role });
+
+    await publishDashboardUpdate({
+      source: "admin_created"
+    });
 
     res.json({ message: "Admin created" });
 
@@ -46,21 +54,21 @@ exports.createAdmin = async (req, res) => {
 exports.getFinance = async (req, res) => {
   try {
     const deposits = await db.query(
-      "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE type='deposit'"
+      "SELECT COALESCE(SUM(amount),0) AS total FROM transactions WHERE type='deposit'"
     );
 
     const withdrawals = await db.query(
-      "SELECT COALESCE(SUM(amount),0) FROM withdrawals WHERE status='approved'"
+      "SELECT COALESCE(SUM(amount),0) AS total FROM withdrawals WHERE status='approved'"
     );
 
     const escrow = await db.query(
-      "SELECT COALESCE(SUM(amount),0) FROM escrow WHERE status='locked'"
+      "SELECT COALESCE(SUM(amount),0) AS total FROM escrow WHERE status='locked'"
     );
 
     res.json({
-      deposits: deposits.rows[0].coalesce,
-      withdrawals: withdrawals.rows[0].coalesce,
-      escrow_locked: escrow.rows[0].coalesce
+      deposits: Number(deposits.rows[0].total),
+      withdrawals: Number(withdrawals.rows[0].total),
+      escrow_locked: Number(escrow.rows[0].total)
     });
 
   } catch (err) {
@@ -69,7 +77,7 @@ exports.getFinance = async (req, res) => {
 };
 
 // ======================
-// 💳 APPROVE WITHDRAWAL (FINANCE ADMIN)
+// 💳 APPROVE WITHDRAWAL
 // ======================
 exports.approveWithdrawal = async (req, res) => {
   const { withdrawal_id } = req.body;
@@ -103,6 +111,14 @@ exports.approveWithdrawal = async (req, res) => {
 
     await db.query("COMMIT");
 
+    await logAction(req.user.id, "APPROVE_WITHDRAWAL", {
+      withdrawal_id
+    });
+
+    await publishDashboardUpdate({
+      source: "withdrawal_approved"
+    });
+
     res.json({ message: "Withdrawal approved" });
 
   } catch (err) {
@@ -112,7 +128,7 @@ exports.approveWithdrawal = async (req, res) => {
 };
 
 // ======================
-// 🚨 FRAUD SYSTEM (FREEZE USER)
+// 🚨 FRAUD SYSTEM
 // ======================
 exports.getFraud = async (req, res) => {
   try {
@@ -128,7 +144,7 @@ exports.getFraud = async (req, res) => {
 };
 
 // ======================
-// ❄️ FREEZE USER ACCOUNT
+// ❄️ FREEZE USER
 // ======================
 exports.freezeUser = async (req, res) => {
   const { user_id } = req.body;
@@ -138,6 +154,17 @@ exports.freezeUser = async (req, res) => {
       `UPDATE users SET status='frozen' WHERE id=$1`,
       [user_id]
     );
+
+    await logAction(req.user.id, "FREEZE_USER", { user_id });
+
+    await publishEvent("user_status_change", {
+      userId: user_id,
+      status: "frozen"
+    });
+
+    await publishDashboardUpdate({
+      source: "user_frozen"
+    });
 
     res.json({ message: "User frozen" });
 
@@ -157,6 +184,17 @@ exports.suspendUser = async (req, res) => {
       `UPDATE users SET status='suspended' WHERE id=$1`,
       [user_id]
     );
+
+    await logAction(req.user.id, "SUSPEND_USER", { user_id });
+
+    await publishEvent("user_status_change", {
+      userId: user_id,
+      status: "suspended"
+    });
+
+    await publishDashboardUpdate({
+      source: "user_suspended"
+    });
 
     res.json({ message: "User suspended" });
 
@@ -182,7 +220,7 @@ exports.viewEscrow = async (req, res) => {
 };
 
 // ======================
-// 👥 GET USERS
+// 👥 USERS
 // ======================
 exports.getUsers = async (req, res) => {
   try {
@@ -199,7 +237,7 @@ exports.getUsers = async (req, res) => {
 };
 
 // ======================
-// 🧑‍💼 GET VENDORS
+// 🧑‍💼 VENDORS
 // ======================
 exports.getVendors = async (req, res) => {
   try {
