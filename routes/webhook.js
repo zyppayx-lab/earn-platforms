@@ -15,7 +15,6 @@ router.post("/paystack", async (req, res) => {
 
   const signature = req.headers["x-paystack-signature"];
 
-  // verify request is from Paystack
   if (hash !== signature) {
     return res.status(400).json({ error: "Invalid signature" });
   }
@@ -23,14 +22,15 @@ router.post("/paystack", async (req, res) => {
   const event = req.body;
 
   try {
-    // ONLY handle successful payments
     if (event.event === "charge.success") {
 
       const reference = event.data.reference;
       const amount = event.data.amount / 100;
       const email = event.data.customer.email;
 
-      // find payment record
+      // ======================
+      // CHECK PAYMENT EXISTS
+      // ======================
       const payment = await db.query(
         "SELECT * FROM payments WHERE reference=$1",
         [reference]
@@ -39,8 +39,17 @@ router.post("/paystack", async (req, res) => {
       if (!payment.rows.length) return res.sendStatus(200);
 
       if (payment.rows[0].status === "success") {
-        return res.sendStatus(200);
+        return res.sendStatus(200); // prevent double credit
       }
+
+      const user = await db.query(
+        "SELECT id FROM users WHERE email=$1",
+        [email]
+      );
+
+      if (!user.rows.length) return res.sendStatus(200);
+
+      const userId = user.rows[0].id;
 
       await db.query("BEGIN");
 
@@ -50,18 +59,21 @@ router.post("/paystack", async (req, res) => {
         [reference]
       );
 
-      // credit user wallet
+      // ======================
+      // CREDIT WALLET (SAFE)
+      // ======================
       await db.query(
-        `UPDATE users SET balance = balance + $1
-         WHERE email=$2`,
-        [amount, email]
+        `UPDATE users SET balance = balance + $1 WHERE id=$2`,
+        [amount, userId]
       );
 
-      // transaction log
+      // ======================
+      // TRANSACTION LOG
+      // ======================
       await db.query(
-        `INSERT INTO transactions (user_id, type, amount)
-         SELECT id, 'deposit', $1 FROM users WHERE email=$2`,
-        [amount, email]
+        `INSERT INTO transactions (user_id, type, amount, reference)
+         VALUES ($1,'deposit',$2,$3)`,
+        [userId, amount, reference]
       );
 
       await db.query("COMMIT");
@@ -71,7 +83,7 @@ router.post("/paystack", async (req, res) => {
 
   } catch (err) {
     await db.query("ROLLBACK");
-    console.error(err);
+    console.error("WEBHOOK ERROR:", err);
     res.sendStatus(500);
   }
 });
