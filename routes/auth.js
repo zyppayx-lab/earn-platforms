@@ -1,8 +1,7 @@
 const router = require("express").Router();
-const bcrypt = require("bcryptjs");
+const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const db = require("../db");
-const { generateCode } = require("../services/referral");
 
 // ======================
 // REGISTER
@@ -11,18 +10,16 @@ router.post("/register", async (req, res) => {
   const { email, password, referred_by } = req.body;
 
   try {
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashed = await bcrypt.hash(password, 10);
 
-    const referralCode = generateCode();
-
-    const user = await db.query(
-      `INSERT INTO users (email, password, referral_code, referred_by)
-       VALUES ($1,$2,$3,$4)
-       RETURNING id, email, referral_code`,
-      [email, hashedPassword, referralCode, referred_by || null]
+    const result = await db.query(
+      `INSERT INTO users (email, password, referred_by)
+       VALUES ($1,$2,$3)
+       RETURNING id, email, role`,
+      [email, hashed, referred_by || null]
     );
 
-    res.json(user.rows[0]);
+    res.json(result.rows[0]);
 
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -48,7 +45,7 @@ router.post("/login", async (req, res) => {
     const valid = await bcrypt.compare(password, user.rows[0].password);
 
     if (!valid) {
-      return res.status(400).json({ error: "Invalid password" });
+      return res.status(400).json({ error: "Wrong password" });
     }
 
     const token = jwt.sign(
@@ -61,7 +58,10 @@ router.post("/login", async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    res.json({ token });
+    res.json({
+      token,
+      role: user.rows[0].role
+    });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
