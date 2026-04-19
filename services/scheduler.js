@@ -1,14 +1,25 @@
 const cron = require("node-cron");
 const db = require("../db");
+const redis = require("./redis");
 
 const { releaseEscrow } = require("./escrow");
 const { processReferralBonus } = require("./referralBonus");
 const { detectFraud } = require("./fraud");
-const { sendPush } = require("./notifications");
+const { sendNotification } = require("./notifications");
 
-// run every 10 minutes
+const client = redis;
+
+// ======================
+// AUTO TASK APPROVAL JOB
+// ======================
 cron.schedule("*/10 * * * *", async () => {
   console.log("⏱ Running auto-approval job...");
+
+  // 🔒 global lock (prevents multi-instance duplication)
+  const lock = await client.get("auto_approval_lock");
+  if (lock) return;
+
+  await client.set("auto_approval_lock", "1", { EX: 600 });
 
   try {
     const pending = await db.query(
@@ -16,42 +27,69 @@ cron.schedule("*/10 * * * *", async () => {
        FROM task_submissions ts
        JOIN tasks t ON ts.task_id = t.id
        WHERE ts.status='pending'
-       AND ts.created_at < NOW() - INTERVAL '24 hours'`
+       AND ts.created_at < NOW() - INTERVAL '24 hours'
+       LIMIT 50`
     );
 
     for (let sub of pending.rows) {
       const userId = sub.user_id;
 
-      await db.query("BEGIN");
+      // 🔒 per-task lock (prevents double processing)
+      const taskLockKey = `task_process:${sub.id}`;
+      const taskLock = await client.get(taskLockKey);
 
-      // 💰 release escrow
-      await releaseEscrow(sub.escrow_id, userId, sub.reward);
+      if (taskLock) continue;
 
-      // ✅ mark approved
-      await db.query(
-        "UPDATE task_submissions SET status='approved' WHERE id=$1",
-        [sub.id]
-      );
+      await client.set(taskLockKey, "1", { EX: 3600 });
 
-      // 🤖 fraud
-      await detectFraud(userId);
+      try {
+        // ======================
+        // 1. RELEASE ESCROW
+        // ======================
+        await releaseEscrow(
+          sub.escrow_id,
+          userId,
+          sub.reward
+        );
 
-      // 🔗 referral
-      await processReferralBonus(userId);
+        // ======================
+        // 2. MARK APPROVED
+        // ======================
+        await db.query(
+          "UPDATE task_submissions SET status='approved' WHERE id=$1",
+          [sub.id]
+        );
 
-      // 📲 notify
-      await sendPush(
-        userId,
-        "Task Auto-Approved ✅",
-        `₦${sub.reward} has been credited`
-      );
+        // ======================
+        // 3. FRAUD CHECK
+        // ======================
+        const risk = await detectFraud(userId);
 
-      await db.query("COMMIT");
+        // ======================
+        // 4. REFERRAL BONUS
+        // ======================
+        await processReferralBonus(userId);
 
-      console.log("✅ Auto-approved:", sub.id);
+        // ======================
+        // 5. NOTIFICATION (NEW SYSTEM)
+        // ======================
+        await sendNotification(
+          userId,
+          "Task Auto-Approved ✅",
+          `₦${sub.reward} has been credited`
+        );
+
+        console.log(`✅ Auto-approved task: ${sub.id}`);
+
+      } catch (err) {
+        console.error(`❌ Task failed ${sub.id}:`, err.message);
+      }
     }
 
   } catch (err) {
-    console.error("Auto-approval error:", err);
+    console.error("Auto-approval job error:", err);
+
+  } finally {
+    await client.del("auto_approval_lock");
   }
 });
