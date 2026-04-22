@@ -15,7 +15,7 @@ const query = async (text, params) => {
   try {
     return await pool.query(text, params);
   } catch (err) {
-    console.error("DB Query Error:", {
+    console.error("❌ DB Query Error:", {
       text,
       error: err.message
     });
@@ -24,8 +24,9 @@ const query = async (text, params) => {
 };
 
 // ======================
-// TRANSACTION HELPER (VERY IMPORTANT FOR ESCROW)
+// SAFE TRANSACTION HELPER (FIXED)
 // ======================
+// IMPORTANT: prevents nested BEGIN bugs in services
 const transaction = async (callback) => {
   const client = await pool.connect();
 
@@ -40,6 +41,8 @@ const transaction = async (callback) => {
 
   } catch (err) {
     await client.query("ROLLBACK");
+
+    console.error("❌ Transaction failed:", err.message);
     throw err;
 
   } finally {
@@ -52,18 +55,18 @@ const transaction = async (callback) => {
 // ======================
 pool.connect()
   .then(client => {
-    console.log("✅ Database connected");
+    console.log("✅ PostgreSQL connected successfully");
     client.release();
   })
   .catch(err => {
-    console.error("❌ DB Error:", err.message);
+    console.error("❌ Database connection failed:", err.message);
   });
 
 // ======================
-// GLOBAL ERROR
+// GLOBAL POOL ERROR HANDLER
 // ======================
 pool.on("error", (err) => {
-  console.error("Unexpected DB error:", err.message);
+  console.error("🔥 Unexpected DB pool error:", err.message);
 });
 
 module.exports = {
