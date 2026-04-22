@@ -1,11 +1,5 @@
 const db = require("../db");
-const redis = require("redis");
-
-const client = redis.createClient({
-  url: process.env.REDIS_URL
-});
-
-client.connect();
+const client = require("./redis");
 
 // ======================
 // THRESHOLDS (EASY TUNING LATER)
@@ -33,7 +27,7 @@ async function detectFraud(userId) {
   const email = user.rows[0].email;
 
   // ======================
-  // RULE 1: TASK ABUSE (TIME WINDOW)
+  // RULE 1: TASK ABUSE
   // ======================
   const recentTasks = await db.query(
     `SELECT COUNT(*) FROM task_submissions
@@ -48,7 +42,7 @@ async function detectFraud(userId) {
   if (taskCount > THRESHOLDS.TASK_HIGH) risk += 50;
 
   // ======================
-  // RULE 2: WALLET ACTIVITY (REDIS TRACKING)
+  // RULE 2: WALLET ACTIVITY (REDIS)
   // ======================
   const key = `wallet_activity:${userId}`;
   const raw = await client.get(key);
@@ -59,7 +53,7 @@ async function detectFraud(userId) {
     try {
       const data = JSON.parse(raw);
       activityCount = data.count || 0;
-    } catch (e) {
+    } catch {
       activityCount = 0;
     }
   }
@@ -69,21 +63,22 @@ async function detectFraud(userId) {
   await client.set(
     key,
     JSON.stringify({ count: activityCount }),
-    { EX: 3600 }
+    "EX",
+    3600
   );
 
   if (activityCount > 10) risk += 30;
   if (activityCount > 20) risk += 50;
 
   // ======================
-  // RULE 3: MULTI ACCOUNT SIGNAL
+  // RULE 3: MULTI ACCOUNT
   // ======================
   if (email.includes("+")) {
     risk += 15;
   }
 
   // ======================
-  // RULE 4: WITHDRAWAL ABUSE
+  // RULE 4: WITHDRAWALS
   // ======================
   const withdrawals = await db.query(
     `SELECT COUNT(*) FROM withdrawals
@@ -99,7 +94,7 @@ async function detectFraud(userId) {
   }
 
   // ======================
-  // FINAL DECISION LOGIC
+  // FINAL ACTION
   // ======================
   if (risk >= THRESHOLDS.RISK_RESTRICT && risk < THRESHOLDS.RISK_FREEZE) {
     await db.query(
