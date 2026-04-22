@@ -10,8 +10,14 @@ const ctrl = require("../controllers/escrowController");
 router.get(
   "/",
   auth,
-  admin("finance_admin", "super_admin"),
-  ctrl.getEscrow
+  admin(["finance_admin", "super_admin"]),
+  async (req, res, next) => {
+    try {
+      await ctrl.getEscrow(req, res);
+    } catch (err) {
+      next(err);
+    }
+  }
 );
 
 // ======================
@@ -20,8 +26,14 @@ router.get(
 router.post(
   "/refund",
   auth,
-  admin("finance_admin", "super_admin"),
-  ctrl.refundEscrow
+  admin(["finance_admin", "super_admin"]),
+  async (req, res, next) => {
+    try {
+      await ctrl.refundEscrow(req, res);
+    } catch (err) {
+      next(err);
+    }
+  }
 );
 
 module.exports = router;
