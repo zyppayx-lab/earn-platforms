@@ -10,6 +10,10 @@ router.post("/register", async (req, res) => {
   const { email, password, referred_by } = req.body;
 
   try {
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password required" });
+    }
+
     // check duplicate user
     const existing = await db.query(
       "SELECT id FROM users WHERE email=$1",
@@ -25,14 +29,15 @@ router.post("/register", async (req, res) => {
     const result = await db.query(
       `INSERT INTO users (email, password, referred_by, role, status)
        VALUES ($1,$2,$3,'user','active')
-       RETURNING id, email, role`,
+       RETURNING id, email, role, status`,
       [email, hashed, referred_by || null]
     );
 
-    res.json(result.rows[0]);
+    return res.json(result.rows[0]);
 
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("REGISTER ERROR:", err.message);
+    return res.status(500).json({ error: "Registration failed" });
   }
 });
 
@@ -43,6 +48,10 @@ router.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
   try {
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password required" });
+    }
+
     const user = await db.query(
       "SELECT * FROM users WHERE email=$1",
       [email]
@@ -54,7 +63,7 @@ router.post("/login", async (req, res) => {
 
     const u = user.rows[0];
 
-    // ❌ BLOCK SUSPENDED USERS
+    // BLOCK SUSPENDED / FROZEN USERS
     if (u.status === "suspended") {
       return res.status(403).json({ error: "Account suspended" });
     }
@@ -79,14 +88,15 @@ router.post("/login", async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    res.json({
+    return res.json({
       token,
       role: u.role,
       status: u.status
     });
 
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("LOGIN ERROR:", err.message);
+    return res.status(500).json({ error: "Login failed" });
   }
 });
 
