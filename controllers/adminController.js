@@ -2,19 +2,26 @@ const db = require("../db");
 const { publishDashboardUpdate, publishEvent } = require("../services/events");
 const { logAction } = require("../services/audit");
 
+// safe wrapper for transactions
+const safeTransaction = async (callback) => {
+  return await db.transaction(async (client) => {
+    return await callback(client);
+  });
+};
+
 // ======================
 // 📊 DASHBOARD
 // ======================
 exports.getDashboard = async (req, res) => {
   try {
-    const users = await db.query("SELECT COUNT(*) FROM users");
-    const vendors = await db.query("SELECT COUNT(*) FROM vendors");
-    const tasks = await db.query("SELECT COUNT(*) FROM tasks");
+    const users = await db.query("SELECT COUNT(*) AS total FROM users");
+    const vendors = await db.query("SELECT COUNT(*) AS total FROM vendors");
+    const tasks = await db.query("SELECT COUNT(*) AS total FROM tasks");
 
     res.json({
-      users: Number(users.rows[0].count),
-      vendors: Number(vendors.rows[0].count),
-      tasks: Number(tasks.rows[0].count)
+      users: Number(users.rows[0].total),
+      vendors: Number(vendors.rows[0].total),
+      tasks: Number(tasks.rows[0].total)
     });
 
   } catch (err) {
@@ -37,9 +44,7 @@ exports.createAdmin = async (req, res) => {
 
     await logAction(req.user.id, "CREATE_ADMIN", { email, role });
 
-    await publishDashboardUpdate({
-      source: "admin_created"
-    });
+    await publishDashboardUpdate({ source: "admin_created" });
 
     res.json({ message: "Admin created" });
 
@@ -77,7 +82,7 @@ exports.getFinance = async (req, res) => {
 };
 
 // ======================
-// 💳 APPROVE WITHDRAWAL
+// 💳 APPROVE WITHDRAWAL (FIXED SAFE FLOW)
 // ======================
 exports.approveWithdrawal = async (req, res) => {
   const { withdrawal_id } = req.body;
@@ -96,24 +101,21 @@ exports.approveWithdrawal = async (req, res) => {
       return res.status(400).json({ error: "Already processed" });
     }
 
-    await db.query("BEGIN");
+    await safeTransaction(async (client) => {
 
-    await db.query(
-      `UPDATE withdrawals SET status='approved' WHERE id=$1`,
-      [withdrawal_id]
-    );
+      await client.query(
+        `UPDATE withdrawals SET status='approved' WHERE id=$1`,
+        [withdrawal_id]
+      );
 
-    await db.query(
-      `INSERT INTO transactions (user_id, type, amount)
-       VALUES ($1,'withdrawal',$2)`,
-      [wd.rows[0].user_id, wd.rows[0].amount]
-    );
-
-    await db.query("COMMIT");
-
-    await logAction(req.user.id, "APPROVE_WITHDRAWAL", {
-      withdrawal_id
+      await client.query(
+        `INSERT INTO transactions (user_id, type, amount)
+         VALUES ($1,'withdrawal',$2)`,
+        [wd.rows[0].user_id, wd.rows[0].amount]
+      );
     });
+
+    await logAction(req.user.id, "APPROVE_WITHDRAWAL", { withdrawal_id });
 
     await publishDashboardUpdate({
       source: "withdrawal_approved"
@@ -122,7 +124,6 @@ exports.approveWithdrawal = async (req, res) => {
     res.json({ message: "Withdrawal approved" });
 
   } catch (err) {
-    await db.query("ROLLBACK");
     res.status(500).json({ error: err.message });
   }
 };
