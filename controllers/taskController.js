@@ -1,13 +1,11 @@
 const db = require("../db");
-const escrow = require("../services/escrow");
-
 const { detectFraud } = require("../services/fraud");
 const { processReferralBonus } = require("../services/referralBonus");
 const { sendNotification } = require("../services/notifications");
 const { publishEvent, publishDashboardUpdate } = require("../services/events");
 
 // ======================
-// CREATE TASK (VENDOR)
+// CREATE TASK (SAFE)
 // ======================
 exports.createTask = async (req, res) => {
   const { title, reward, total_slots } = req.body;
@@ -29,48 +27,47 @@ exports.createTask = async (req, res) => {
       return res.status(400).json({ error: "Insufficient vendor balance" });
     }
 
-    await db.query("BEGIN");
+    const task = await db.transaction(async (client) => {
 
-    // deduct vendor balance
-    await db.query(
-      "UPDATE vendors SET balance = balance - $1 WHERE id=$2",
-      [totalCost, vendorId]
-    );
+      // deduct vendor balance
+      await client.query(
+        "UPDATE vendors SET balance = balance - $1 WHERE id=$2",
+        [totalCost, vendorId]
+      );
 
-    // create task
-    const task = await db.query(
-      `INSERT INTO tasks (title, reward, total_slots, vendor_id, status)
-       VALUES ($1,$2,$3,$4,'active')
-       RETURNING *`,
-      [title, reward, total_slots, vendorId]
-    );
+      // create task
+      const result = await client.query(
+        `INSERT INTO tasks (title, reward, total_slots, vendor_id, status)
+         VALUES ($1,$2,$3,$4,'active')
+         RETURNING *`,
+        [title, reward, total_slots, vendorId]
+      );
 
-    // lock escrow
-    await escrow.lockEscrow(task.rows[0].id, vendorId, totalCost);
-
-    await db.query("COMMIT");
-
-    // ======================
-    // REAL-TIME EVENTS
-    // ======================
-    await publishEvent("new_task", {
-      task: task.rows[0]
+      return result.rows[0];
     });
+
+    // escrow OUTSIDE DB transaction (important fix)
+    await require("../services/escrow").createEscrow(
+      vendorId,
+      task.id,
+      totalCost
+    );
+
+    await publishEvent("task_created", { task });
 
     await publishDashboardUpdate({
       source: "task_created"
     });
 
-    res.json(task.rows[0]);
+    res.json(task);
 
   } catch (err) {
-    await db.query("ROLLBACK");
     res.status(500).json({ error: err.message });
   }
 };
 
 // ======================
-// SUBMIT TASK (USER)
+// SUBMIT TASK
 // ======================
 exports.submitTask = async (req, res) => {
   const { task_id, proof } = req.body;
@@ -78,7 +75,7 @@ exports.submitTask = async (req, res) => {
 
   try {
     const existing = await db.query(
-      `SELECT * FROM task_submissions
+      `SELECT id FROM task_submissions
        WHERE task_id=$1 AND user_id=$2`,
       [task_id, userId]
     );
@@ -105,7 +102,7 @@ exports.submitTask = async (req, res) => {
 };
 
 // ======================
-// APPROVE TASK (ADMIN)
+// APPROVE TASK (IDEMPOTENT SAFE)
 // ======================
 exports.approveTask = async (req, res) => {
   const { submission_id } = req.body;
@@ -120,8 +117,8 @@ exports.approveTask = async (req, res) => {
       return res.status(404).json({ error: "Submission not found" });
     }
 
-    if (sub.rows[0].status === "approved") {
-      return res.status(400).json({ error: "Already approved" });
+    if (sub.rows[0].status !== "pending") {
+      return res.status(400).json({ error: "Already processed" });
     }
 
     const task = await db.query(
@@ -129,44 +126,39 @@ exports.approveTask = async (req, res) => {
       [sub.rows[0].task_id]
     );
 
+    if (!task.rows.length) {
+      return res.status(404).json({ error: "Task not found" });
+    }
+
     const reward = task.rows[0].reward;
     const userId = sub.rows[0].user_id;
 
-    await db.query("BEGIN");
+    await db.transaction(async (client) => {
 
-    // mark approved
-    await db.query(
-      `UPDATE task_submissions
-       SET status='approved'
-       WHERE id=$1`,
-      [submission_id]
-    );
+      await client.query(
+        `UPDATE task_submissions
+         SET status='approved'
+         WHERE id=$1`,
+        [submission_id]
+      );
 
-    // release escrow + credit user
-    await escrow.releaseEscrow(
+      await client.query(
+        `INSERT INTO transactions (user_id, type, amount)
+         VALUES ($1,'task_reward',$2)`,
+        [userId, reward]
+      );
+    });
+
+    // external side effects AFTER DB commit
+    await require("../services/escrow").releaseEscrow(
       sub.rows[0].task_id,
       userId,
       reward
     );
 
-    // transaction log
-    await db.query(
-      `INSERT INTO transactions (user_id, type, amount)
-       VALUES ($1,'task_reward',$2)`,
-      [userId, reward]
-    );
-
-    await db.query("COMMIT");
-
-    // ======================
-    // BACKEND HOOKS
-    // ======================
     await detectFraud(userId);
     await processReferralBonus(userId);
 
-    // ======================
-    // NOTIFICATIONS
-    // ======================
     await sendNotification(
       userId,
       "Task Approved 🎉",
@@ -174,9 +166,6 @@ exports.approveTask = async (req, res) => {
       "success"
     );
 
-    // ======================
-    // REAL-TIME EVENTS
-    // ======================
     await publishEvent("task_approved", {
       userId,
       reward
@@ -189,7 +178,6 @@ exports.approveTask = async (req, res) => {
     res.json({ message: "Task approved" });
 
   } catch (err) {
-    await db.query("ROLLBACK");
     res.status(500).json({ error: err.message });
   }
 };
