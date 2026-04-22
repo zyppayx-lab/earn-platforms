@@ -1,10 +1,9 @@
 const router = require("express").Router();
 const events = require("../services/events");
-
 const auth = require("../middleware/auth");
 
 // ======================
-// REAL-TIME STREAM (SECURE)
+// REAL-TIME STREAM (SECURE SSE)
 // ======================
 router.get("/events", auth, (req, res) => {
   const userId = req.user.id;
@@ -13,22 +12,32 @@ router.get("/events", auth, (req, res) => {
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
 
-  res.flushHeaders();
+  res.flushHeaders?.();
+
+  let isClosed = false;
 
   // ======================
-  // HEARTBEAT (KEEP CONNECTION ALIVE)
+  // HEARTBEAT
   // ======================
   const interval = setInterval(() => {
+    if (isClosed) return;
+
     res.write(`event: ping\ndata: {}\n\n`);
   }, 25000);
 
   // ======================
-  // EVENT HANDLER (FILTERED)
+  // EVENT HANDLER
   // ======================
   const handler = (data) => {
-    // send only relevant events
-    if (!data.userId || data.userId === userId) {
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    try {
+      if (isClosed) return;
+
+      // user filtering
+      if (!data.userId || data.userId === userId) {
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+      }
+    } catch (err) {
+      console.error("SSE WRITE ERROR:", err.message);
     }
   };
 
@@ -38,8 +47,16 @@ router.get("/events", auth, (req, res) => {
   // CLEANUP
   // ======================
   req.on("close", () => {
+    isClosed = true;
+
     clearInterval(interval);
     events.off("update", handler);
+
+    try {
+      res.end();
+    } catch (err) {
+      console.error("SSE CLOSE ERROR:", err.message);
+    }
   });
 });
 
