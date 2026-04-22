@@ -12,7 +12,7 @@ const ctrl = require("../controllers/adminController");
 router.get(
   "/dashboard",
   auth,
-  admin("admin", "super_admin", "analytics_admin"),
+  admin(["admin", "super_admin", "analytics_admin"]),
   permit("can_view_dashboard"),
   ctrl.getDashboard
 );
@@ -23,7 +23,7 @@ router.get(
 router.post(
   "/create-admin",
   auth,
-  admin("super_admin"),
+  admin(["super_admin"]),
   ctrl.createAdmin
 );
 
@@ -33,7 +33,7 @@ router.post(
 router.get(
   "/users",
   auth,
-  admin("admin", "super_admin"),
+  admin(["admin", "super_admin"]),
   permit("can_manage_users"),
   ctrl.getUsers
 );
@@ -41,7 +41,7 @@ router.get(
 router.post(
   "/suspend-user",
   auth,
-  admin("admin", "super_admin"),
+  admin(["admin", "super_admin"]),
   permit("can_manage_users"),
   ctrl.suspendUser
 );
@@ -49,7 +49,7 @@ router.post(
 router.post(
   "/freeze-user",
   auth,
-  admin("admin", "super_admin"),
+  admin(["admin", "super_admin"]),
   permit("can_manage_users"),
   ctrl.freezeUser
 );
@@ -60,7 +60,7 @@ router.post(
 router.get(
   "/vendors",
   auth,
-  admin("admin", "super_admin"),
+  admin(["admin", "super_admin"]),
   permit("can_manage_vendors"),
   ctrl.getVendors
 );
@@ -71,7 +71,7 @@ router.get(
 router.get(
   "/finance",
   auth,
-  admin("finance_admin", "super_admin"),
+  admin(["finance_admin", "super_admin"]),
   permit("can_view_finance"),
   ctrl.getFinance
 );
@@ -82,7 +82,7 @@ router.get(
 router.post(
   "/approve-withdrawal",
   auth,
-  admin("finance_admin", "super_admin"),
+  admin(["finance_admin", "super_admin"]),
   permit("can_approve_withdrawals"),
   ctrl.approveWithdrawal
 );
@@ -93,7 +93,7 @@ router.post(
 router.get(
   "/fraud",
   auth,
-  admin("fraud_admin", "super_admin"),
+  admin(["fraud_admin", "super_admin"]),
   permit("can_manage_fraud"),
   ctrl.getFraud
 );
@@ -104,7 +104,7 @@ router.get(
 router.get(
   "/escrow",
   auth,
-  admin("finance_admin", "super_admin"),
+  admin(["finance_admin", "super_admin"]),
   permit("can_manage_escrow"),
   ctrl.viewEscrow
 );
