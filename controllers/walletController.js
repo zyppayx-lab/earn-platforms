@@ -12,9 +12,11 @@ exports.getBalance = async (req, res) => {
       [userId]
     );
 
-    res.json({
-      balance: result.rows[0]?.balance || 0
-    });
+    const balance = result.rows.length
+      ? Number(result.rows[0].balance)
+      : 0;
+
+    res.json({ balance });
 
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -29,8 +31,14 @@ exports.requestWithdrawal = async (req, res) => {
   const { amount, bank_details } = req.body;
 
   try {
-    if (!amount || amount <= 0) {
+    const withdrawalAmount = Number(amount);
+
+    if (!withdrawalAmount || withdrawalAmount <= 0) {
       return res.status(400).json({ error: "Invalid amount" });
+    }
+
+    if (!bank_details) {
+      return res.status(400).json({ error: "Bank details required" });
     }
 
     const user = await db.query(
@@ -38,30 +46,38 @@ exports.requestWithdrawal = async (req, res) => {
       [userId]
     );
 
-    if (user.rows[0].balance < amount) {
+    if (!user.rows.length) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const currentBalance = Number(user.rows[0].balance);
+
+    if (currentBalance < withdrawalAmount) {
       return res.status(400).json({ error: "Insufficient balance" });
     }
 
     await db.query("BEGIN");
 
-    // deduct immediately (prevents double withdrawal)
+    // deduct immediately (prevents double spending)
     await db.query(
-      "UPDATE users SET balance = balance - $1 WHERE id=$2",
-      [amount, userId]
+      `UPDATE users
+       SET balance = balance - $1
+       WHERE id=$2`,
+      [withdrawalAmount, userId]
     );
 
     // create withdrawal request
     await db.query(
       `INSERT INTO withdrawals (user_id, amount, bank_details, status)
        VALUES ($1,$2,$3,'pending')`,
-      [userId, amount, bank_details]
+      [userId, withdrawalAmount, bank_details]
     );
 
     // log transaction
     await db.query(
       `INSERT INTO transactions (user_id, type, amount)
        VALUES ($1,'withdraw_request',$2)`,
-      [userId, amount]
+      [userId, withdrawalAmount]
     );
 
     await db.query("COMMIT");
@@ -84,7 +100,8 @@ exports.getTransactions = async (req, res) => {
     const userId = req.user.id;
 
     const result = await db.query(
-      `SELECT * FROM transactions
+      `SELECT *
+       FROM transactions
        WHERE user_id=$1
        ORDER BY created_at DESC
        LIMIT 100`,
