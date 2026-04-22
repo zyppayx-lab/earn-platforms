@@ -1,6 +1,26 @@
 const jwt = require("jsonwebtoken");
 const db = require("../db");
 
+// ======================
+// GLOBAL KILL SWITCH CHECK
+// ======================
+async function checkKillSwitch() {
+  const result = await db.query(
+    `SELECT status, mode
+     FROM system_control
+     WHERE id = 1`
+  );
+
+  const system = result.rows[0];
+
+  if (!system) return false;
+
+  return system.status === "shutdown";
+}
+
+// ======================
+// AUTH MIDDLEWARE
+// ======================
 module.exports = async (req, res, next) => {
   try {
     const header = req.headers.authorization;
@@ -12,6 +32,17 @@ module.exports = async (req, res, next) => {
     const token = header.split(" ")[1];
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // ======================
+    // GLOBAL KILL SWITCH ENFORCEMENT
+    // ======================
+    const isShutdown = await checkKillSwitch();
+
+    if (isShutdown) {
+      return res.status(503).json({
+        error: "System temporarily disabled by admin control center"
+      });
+    }
 
     // ======================
     // GET USER
@@ -41,7 +72,7 @@ module.exports = async (req, res, next) => {
     }
 
     // ======================
-    // ATTACH USER TO REQUEST
+    // ATTACH USER
     // ======================
     req.user = {
       id: user.id,
