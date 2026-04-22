@@ -1,4 +1,6 @@
 const db = require("../db");
+const { logAction } = require("../services/audit");
+const { publishEvent, publishDashboardUpdate } = require("../services/events");
 
 // ======================
 // VIEW ESCROW (ADMIN)
@@ -19,7 +21,7 @@ exports.getEscrow = async (req, res) => {
 };
 
 // ======================
-// REFUND ESCROW (ADMIN)
+// REFUND ESCROW (ADMIN SAFE)
 // ======================
 exports.refundEscrow = async (req, res) => {
   const { escrow_id } = req.body;
@@ -40,37 +42,51 @@ exports.refundEscrow = async (req, res) => {
 
     const { vendor_id, amount } = esc.rows[0];
 
-    await db.query("BEGIN");
+    await db.transaction(async (client) => {
 
-    // mark escrow as refunded
-    await db.query(
-      `UPDATE escrow
-       SET status='refunded'
-       WHERE id=$1`,
-      [escrow_id]
-    );
+      // 1. mark escrow refunded
+      await client.query(
+        `UPDATE escrow SET status='refunded' WHERE id=$1`,
+        [escrow_id]
+      );
 
-    // return money to vendor
-    await db.query(
-      `UPDATE vendors
-       SET balance = balance + $1
-       WHERE id=$2`,
-      [amount, vendor_id]
-    );
+      // 2. refund vendor
+      await client.query(
+        `UPDATE vendors SET balance = balance + $1 WHERE id=$2`,
+        [amount, vendor_id]
+      );
 
-    // log transaction
-    await db.query(
-      `INSERT INTO transactions (user_id, type, amount)
-       VALUES ($1,'escrow_refund',$2)`,
-      [vendor_id, amount]
-    );
+      // 3. log transaction
+      await client.query(
+        `INSERT INTO transactions (user_id, type, amount)
+         VALUES ($1,'escrow_refund',$2)`,
+        [vendor_id, amount]
+      );
+    });
 
-    await db.query("COMMIT");
+    // ======================
+    // AUDIT + REAL-TIME OPS
+    // ======================
+    await logAction(req.user.id, "ESCROW_REFUND", {
+      escrow_id,
+      vendor_id,
+      amount
+    });
+
+    await publishEvent("finance_update", {
+      type: "escrow_refund",
+      escrow_id,
+      vendor_id,
+      amount
+    });
+
+    await publishDashboardUpdate({
+      source: "escrow_refunded"
+    });
 
     res.json({ message: "Escrow refunded to vendor" });
 
   } catch (err) {
-    await db.query("ROLLBACK");
     res.status(500).json({ error: err.message });
   }
 };
