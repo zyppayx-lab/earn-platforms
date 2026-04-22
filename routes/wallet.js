@@ -13,31 +13,34 @@ router.get("/balance", auth, async (req, res) => {
       [req.user.id]
     );
 
-    res.json({
-      balance: result.rows[0]?.balance || 0
-    });
+    const balance = result.rows?.[0]?.balance ?? 0;
+
+    return res.json({ balance });
 
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("BALANCE ERROR:", err.message);
+    return res.status(500).json({ error: "Failed to fetch balance" });
   }
 });
 
 // ======================
-// GET TRANSACTIONS (IMPORTANT FOR FINTECH)
+// GET TRANSACTIONS
 // ======================
 router.get("/transactions", auth, async (req, res) => {
   try {
     const result = await db.query(
       `SELECT * FROM transactions 
        WHERE user_id=$1 
-       ORDER BY created_at DESC`,
+       ORDER BY created_at DESC
+       LIMIT 100`,
       [req.user.id]
     );
 
-    res.json(result.rows);
+    return res.json(result.rows);
 
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("TRANSACTION ERROR:", err.message);
+    return res.status(500).json({ error: "Failed to fetch transactions" });
   }
 });
 
