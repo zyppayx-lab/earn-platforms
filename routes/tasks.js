@@ -11,13 +11,19 @@ const {
 } = require("../controllers/taskController");
 
 // ======================
-// CREATE TASK (VENDOR)
+// CREATE TASK (VENDOR ONLY)
 // ======================
 router.post(
   "/create",
   auth,
   vendor,
-  createTask
+  async (req, res, next) => {
+    try {
+      await createTask(req, res);
+    } catch (err) {
+      next(err);
+    }
+  }
 );
 
 // ======================
@@ -26,17 +32,29 @@ router.post(
 router.post(
   "/submit",
   auth,
-  submitTask
+  async (req, res, next) => {
+    try {
+      await submitTask(req, res);
+    } catch (err) {
+      next(err);
+    }
+  }
 );
 
 // ======================
-// APPROVE TASK (ADMIN)
+// APPROVE TASK (ADMIN ONLY)
 // ======================
 router.post(
   "/approve",
   auth,
-  admin("admin", "super_admin"),
-  approveTask
+  admin(["admin", "super_admin"]),
+  async (req, res, next) => {
+    try {
+      await approveTask(req, res);
+    } catch (err) {
+      next(err);
+    }
+  }
 );
 
 module.exports = router;
