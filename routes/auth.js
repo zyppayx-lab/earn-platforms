@@ -10,10 +10,6 @@ router.post("/register", async (req, res) => {
   const { email, password, referred_by } = req.body;
 
   try {
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password required" });
-    }
-
     // check duplicate user
     const existing = await db.query(
       "SELECT id FROM users WHERE email=$1",
@@ -33,11 +29,14 @@ router.post("/register", async (req, res) => {
       [email, hashed, referred_by || null]
     );
 
-    return res.json(result.rows[0]);
+    return res.json({
+      message: "Registration successful",
+      user: result.rows[0]
+    });
 
   } catch (err) {
-    console.error("REGISTER ERROR:", err.message);
-    return res.status(500).json({ error: "Registration failed" });
+    console.error("REGISTER ERROR:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
@@ -48,22 +47,20 @@ router.post("/login", async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password required" });
-    }
-
     const user = await db.query(
       "SELECT * FROM users WHERE email=$1",
       [email]
     );
 
     if (!user.rows.length) {
-      return res.status(400).json({ error: "User not found" });
+      return res.status(400).json({ error: "Invalid credentials" });
     }
 
     const u = user.rows[0];
 
-    // BLOCK SUSPENDED / FROZEN USERS
+    // ======================
+    // ACCOUNT STATUS BLOCK
+    // ======================
     if (u.status === "suspended") {
       return res.status(403).json({ error: "Account suspended" });
     }
@@ -75,9 +72,12 @@ router.post("/login", async (req, res) => {
     const valid = await bcrypt.compare(password, u.password);
 
     if (!valid) {
-      return res.status(400).json({ error: "Wrong password" });
+      return res.status(400).json({ error: "Invalid credentials" });
     }
 
+    // ======================
+    // TOKEN GENERATION
+    // ======================
     const token = jwt.sign(
       {
         id: u.id,
@@ -90,13 +90,17 @@ router.post("/login", async (req, res) => {
 
     return res.json({
       token,
-      role: u.role,
-      status: u.status
+      user: {
+        id: u.id,
+        email: u.email,
+        role: u.role,
+        status: u.status
+      }
     });
 
   } catch (err) {
-    console.error("LOGIN ERROR:", err.message);
-    return res.status(500).json({ error: "Login failed" });
+    console.error("LOGIN ERROR:", err);
+    return res.status(500).json({ error: "Internal server error" });
   }
 });
 
