@@ -7,9 +7,8 @@ exports.createVendor = async (req, res) => {
   const userId = req.user.id;
 
   try {
-    // check if already vendor
     const existing = await db.query(
-      "SELECT * FROM vendors WHERE id=$1",
+      "SELECT id FROM vendors WHERE id=$1",
       [userId]
     );
 
@@ -17,14 +16,12 @@ exports.createVendor = async (req, res) => {
       return res.status(400).json({ error: "Already a vendor" });
     }
 
-    // create vendor account
     await db.query(
       `INSERT INTO vendors (id, balance)
        VALUES ($1, 0)`,
       [userId]
     );
 
-    // update user role
     await db.query(
       `UPDATE users SET role='vendor' WHERE id=$1`,
       [userId]
@@ -38,7 +35,7 @@ exports.createVendor = async (req, res) => {
 };
 
 // ======================
-// ADD FUNDS (FROM USER WALLET → VENDOR)
+// ADD FUNDS (USER WALLET → VENDOR WALLET) FIXED
 // ======================
 exports.addFunds = async (req, res) => {
   const { amount } = req.body;
@@ -54,21 +51,38 @@ exports.addFunds = async (req, res) => {
       [userId]
     );
 
-    if (user.rows[0].balance < amount) {
+    if (!user.rows.length) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    if (Number(user.rows[0].balance) < amount) {
       return res.status(400).json({ error: "Insufficient wallet balance" });
+    }
+
+    const vendor = await db.query(
+      "SELECT id FROM vendors WHERE id=$1",
+      [userId]
+    );
+
+    if (!vendor.rows.length) {
+      return res.status(400).json({ error: "Vendor account not found" });
     }
 
     await db.query("BEGIN");
 
-    // deduct from user wallet
+    // deduct user wallet
     await db.query(
-      `UPDATE users SET balance = balance - $1 WHERE id=$2`,
+      `UPDATE users
+       SET balance = balance - $1
+       WHERE id=$2`,
       [amount, userId]
     );
 
-    // credit vendor balance
+    // credit vendor wallet (FIXED)
     await db.query(
-      `UPDATE vendors SET balance = balance + $1 WHERE id=$2`,
+      `UPDATE vendors
+       SET balance = balance + $1
+       WHERE id=$2`,
       [amount, userId]
     );
 
@@ -81,7 +95,7 @@ exports.addFunds = async (req, res) => {
 
     await db.query("COMMIT");
 
-    res.json({ message: "Vendor wallet funded" });
+    res.json({ message: "Vendor wallet funded successfully" });
 
   } catch (err) {
     await db.query("ROLLBACK");
@@ -90,7 +104,7 @@ exports.addFunds = async (req, res) => {
 };
 
 // ======================
-// VENDOR DASHBOARD
+// VENDOR DASHBOARD (FIXED COALESCE)
 // ======================
 exports.dashboard = async (req, res) => {
   const vendorId = req.user.id;
@@ -109,17 +123,17 @@ exports.dashboard = async (req, res) => {
     );
 
     const spent = await db.query(
-      `SELECT COALESCE(SUM(amount),0)
+      `SELECT COALESCE(SUM(amount),0) AS total
        FROM escrow
        WHERE vendor_id=$1`,
       [vendorId]
     );
 
     res.json({
-      balance: balance.rows[0]?.balance || 0,
+      balance: Number(balance.rows[0]?.balance || 0),
       total_tasks: tasks.rows.length,
       tasks: tasks.rows,
-      total_spent: spent.rows[0].coalesce
+      total_spent: Number(spent.rows[0].total)
     });
 
   } catch (err) {
