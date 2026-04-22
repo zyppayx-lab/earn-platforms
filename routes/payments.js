@@ -6,21 +6,27 @@ const { initializePayment } = require("../controllers/paymentController");
 // ======================
 // INITIATE PAYMENT (PAYSTACK)
 // ======================
-router.post("/initialize", auth, async (req, res, next) => {
+router.post("/initialize", auth, async (req, res) => {
   try {
     const { amount } = req.body;
 
-    // basic validation
+    // ======================
+    // VALIDATION
+    // ======================
     if (!amount || amount <= 0) {
       return res.status(400).json({ error: "Invalid amount" });
     }
 
-    req.body.user_id = req.user.id;
+    // ======================
+    // CALL CONTROLLER DIRECTLY
+    // ======================
+    req.body.userId = req.user.id;
 
-    return initializePayment(req, res);
+    await initializePayment(req, res);
 
   } catch (err) {
-    next(err);
+    console.error("PAYMENT ROUTE ERROR:", err.message);
+    return res.status(500).json({ error: "Payment route failed" });
   }
 });
 
