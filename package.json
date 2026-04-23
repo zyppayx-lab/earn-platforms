@@ -1,25 +1,13 @@
 {
-  "name": "trivexa-pay",
-  "version": "1.6.0",
-  "description": "Trivexa Pay - Earning & Fintech Platform",
-  "main": "index.js",
+  "name": "trivexapay-backend",
+  "version": "1.0.0",
+  "main": "server.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node index.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "pg": "^8.11.3",
-    "dotenv": "^16.4.0",
-    "jsonwebtoken": "^9.0.2",
-    "bcrypt": "^5.1.0",
-    "node-cron": "^3.0.3",
-    "ioredis": "^5.3.2",
-    "redis": "^4.6.13",
-    "body-parser": "^1.20.2",
-    "helmet": "^7.1.0",
-    "axios": "^1.6.0",
-    "morgan": "^1.10.0",
-    "uuid": "^9.0.1"
+    "cors": "^2.8.5",
+    "@supabase/supabase-js": "^2.0.0"
   }
 }
