@@ -1,42 +1,50 @@
 import { Link } from "react-router-dom";
+import jwt_decode from "jwt-decode";
 
 export default function Sidebar() {
-  const role = localStorage.getItem("role");
+  const token = localStorage.getItem("token");
+
+  let role = null;
+
+  try {
+    if (token) {
+      const decoded = jwt_decode(token);
+      role = decoded.role;
+    }
+  } catch (err) {
+    role = null;
+  }
+
+  const canFinance = ["finance_admin", "super_admin"].includes(role);
+  const canFraud = ["fraud_admin", "super_admin"].includes(role);
+  const canUsers = ["admin", "super_admin"].includes(role);
+  const canAnalytics = ["analytics_admin", "super_admin"].includes(role);
 
   return (
-    <div style={{
-      width: 220,
-      height: "100vh",
-      background: "#0f0f0f",
-      color: "#fff",
-      padding: 20,
-      display: "flex",
-      flexDirection: "column",
-      gap: "12px"
-    }}>
+    <div style={styles.sidebar}>
       <h3 style={{ color: "#00ffcc" }}>💰 Trivexa Admin</h3>
 
       {/* COMMON */}
       <Link style={linkStyle} to="/admin">📊 Dashboard</Link>
       <Link style={linkStyle} to="/tasks">🧩 Tasks</Link>
 
-      {/* FINANCE ACCESS */}
-      {(role === "finance_admin" || role === "super_admin") && (
+      {/* FINANCE */}
+      {canFinance && (
         <Link style={linkStyle} to="/admin/finance">💸 Finance</Link>
       )}
 
-      {/* FRAUD ACCESS */}
-      {(role === "fraud_admin" || role === "super_admin") && (
+      {/* FRAUD */}
+      {canFraud && (
         <Link style={linkStyle} to="/admin/fraud">🚨 Fraud</Link>
       )}
 
-      {/* USER MANAGEMENT */}
-      {(role === "super_admin" || role === "admin") && (
+      {/* USERS */}
+      {canUsers && (
         <Link style={linkStyle} to="/admin/users">👥 Users</Link>
       )}
 
       {/* ANALYTICS */}
-      {(role === "analytics_admin" || role === "super_admin") && (
+      {canAnalytics && (
         <Link style={linkStyle} to="/admin/analytics">📈 Analytics</Link>
       )}
 
@@ -46,6 +54,19 @@ export default function Sidebar() {
     </div>
   );
 }
+
+const styles = {
+  sidebar: {
+    width: 220,
+    height: "100vh",
+    background: "#0f0f0f",
+    color: "#fff",
+    padding: 20,
+    display: "flex",
+    flexDirection: "column",
+    gap: "12px"
+  }
+};
 
 const linkStyle = {
   color: "#ccc",
