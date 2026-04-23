@@ -1,11 +1,11 @@
 const express = require('express');
 const cors = require('cors');
 
-const authRoutes = require('./modules/auth/auth.routes');
-const walletRoutes = require('./modules/wallet/wallet.routes');
-const taskRoutes = require('./modules/tasks/task.routes');
-const webhookRoutes = require('./modules/webhooks/webhook.routes');
-const healthRoutes = require('./health/health.routes');
+const authRoutes = require('./auth.routes');
+const walletRoutes = require('./wallet.routes');
+const taskRoutes = require('./task.routes');
+const webhookRoutes = require('./webhook.routes');
+const healthRoutes = require('./health.routes');
 
 const app = express();
 
