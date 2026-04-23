@@ -1,94 +1,132 @@
 const redis = require("./redis");
 
 // ======================
-// EVENT TYPES (STANDARDIZED)
+// OPS EVENT CHANNELS
 // ======================
-const EVENT_TYPES = {
-  DASHBOARD_UPDATE: "dashboard_update",
-  NEW_TASK: "new_task",
-  TASK_APPROVED: "task_approved",
-  TASK_REJECTED: "task_rejected",
-  WITHDRAWAL_STATUS: "withdrawal_status",
-  FRAUD_ALERT: "fraud_alert",
-  ESCROW_UPDATE: "escrow_update"
+const OPS_CHANNELS = {
+  DASHBOARD: "ops:dashboard",
+  TRANSACTIONS: "ops:transactions",
+  FRAUD: "ops:fraud",
+  ESCROW: "ops:escrow",
+  USERS: "ops:users",
+  SYSTEM: "ops:system"
 };
 
 // ======================
-// 🔴 GENERIC EVENT PUBLISHER
+// SAFE REDIS PUBLISHER
 // ======================
-async function publishEvent(channel, data) {
+async function safePublish(channel, payload) {
   try {
-    const payload = {
-      event: channel,
-      data,
-      timestamp: new Date().toISOString()
-    };
+    if (!redis || redis.status !== "ready") {
+      console.error("Redis not ready, event dropped:", channel);
+      return;
+    }
 
-    await redis.publish(channel, JSON.stringify(payload));
+    await redis.publish(
+      channel,
+      JSON.stringify(payload)
+    );
 
   } catch (err) {
-    console.error("Event publish failed:", err.message);
+    console.error("EVENT PUBLISH FAILED:", {
+      channel,
+      error: err.message
+    });
   }
 }
 
 // ======================
-// 📊 DASHBOARD UPDATE EVENT
+// CORE EVENT EMITTER
+// ======================
+async function emitEvent(channel, data, priority = "normal") {
+  const event = {
+    channel,
+    priority,
+    timestamp: new Date().toISOString(),
+    data
+  };
+
+  return safePublish(channel, event);
+}
+
+// ======================
+// DASHBOARD UPDATE
 // ======================
 async function publishDashboardUpdate(extra = {}) {
-  return publishEvent(EVENT_TYPES.DASHBOARD_UPDATE, {
-    message: "Dashboard updated",
+  return emitEvent(OPS_CHANNELS.DASHBOARD, {
+    message: "Dashboard update",
     ...extra
   });
 }
 
 // ======================
-// 🧩 NEW TASK EVENT
+// TRANSACTION EVENT
 // ======================
-async function publishNewTask(task) {
-  return publishEvent(EVENT_TYPES.NEW_TASK, {
-    message: "New task available",
-    task
+async function publishTransactionEvent(transaction) {
+  return emitEvent(OPS_CHANNELS.TRANSACTIONS, {
+    message: "New transaction",
+    transaction
   });
 }
 
 // ======================
-// 💳 TASK APPROVED EVENT
+// FRAUD ALERT (HIGH PRIORITY)
 // ======================
-async function publishTaskApproved(userId, amount) {
-  return publishEvent(EVENT_TYPES.TASK_APPROVED, {
-    message: "Task approved",
+async function publishFraudAlert(userId, risk, reason) {
+  return emitEvent(
+    OPS_CHANNELS.FRAUD,
+    {
+      message: "Fraud alert triggered",
+      userId,
+      risk,
+      reason,
+      action: risk >= 80 ? "AUTO_FREEZE_SUGGESTED" : "MONITOR"
+    },
+    "critical"
+  );
+}
+
+// ======================
+// ESCROW EVENT
+// ======================
+async function publishEscrowUpdate(escrow) {
+  return emitEvent(OPS_CHANNELS.ESCROW, {
+    message: "Escrow update",
+    escrowId: escrow.id,
+    userId: escrow.user_id,
+    amount: escrow.amount,
+    status: escrow.status
+  });
+}
+
+// ======================
+// USER EVENT
+// ======================
+async function publishUserEvent(userId, status) {
+  return emitEvent(OPS_CHANNELS.USERS, {
+    message: "User status update",
     userId,
-    amount
-  });
-}
-
-// ======================
-// 🚨 FRAUD ALERT EVENT
-// ======================
-async function publishFraudAlert(userId, risk) {
-  return publishEvent(EVENT_TYPES.FRAUD_ALERT, {
-    message: "Fraud detected",
-    userId,
-    risk
-  });
-}
-
-// ======================
-// 🏦 ESCROW UPDATE EVENT
-// ======================
-async function publishEscrowUpdate(taskId, status) {
-  return publishEvent(EVENT_TYPES.ESCROW_UPDATE, {
-    taskId,
     status
   });
 }
 
+// ======================
+// SYSTEM HEALTH EVENT
+// ======================
+async function publishSystemEvent(metrics) {
+  return emitEvent(OPS_CHANNELS.SYSTEM, {
+    message: "System metrics",
+    metrics
+  });
+}
+
 module.exports = {
-  publishEvent,
+  OPS_CHANNELS,
+  emitEvent,
   publishDashboardUpdate,
-  publishNewTask,
-  publishTaskApproved,
+  publishTransactionEvent,
   publishFraudAlert,
   publishEscrowUpdate,
-  EVENT_TYPES
+  publishUserEvent,
+  publishSystemEvent
 };
