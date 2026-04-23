@@ -1,16 +1,9 @@
 const router = require("express").Router();
 const crypto = require("crypto");
 const db = require("../db");
-const redis = require("redis");
 
-// ======================
-// REDIS CLIENT
-// ======================
-const client = redis.createClient({
-  url: process.env.REDIS_URL
-});
-
-client.connect();
+const Redis = require("ioredis");
+const client = new Redis(process.env.REDIS_URL);
 
 // ======================
 // PAYSTACK WEBHOOK
@@ -20,24 +13,23 @@ router.post("/paystack", async (req, res) => {
 
   try {
     // ======================
-    // VERIFY SIGNATURE
+    // SAFE RAW BODY CHECK
     // ======================
+    const rawBody = req.rawBody || JSON.stringify(req.body);
+
     const hash = crypto
       .createHmac("sha512", secret)
-      .update(req.rawBody)
+      .update(rawBody)
       .digest("hex");
 
     const signature = req.headers["x-paystack-signature"];
 
     if (hash !== signature) {
-      return res.status(400).json({ error: "Invalid signature" });
+      return res.status(400).send("Invalid signature");
     }
 
     const event = req.body;
 
-    // ======================
-    // ONLY SUCCESSFUL PAYMENTS
-    // ======================
     if (event.event !== "charge.success") {
       return res.sendStatus(200);
     }
@@ -47,19 +39,17 @@ router.post("/paystack", async (req, res) => {
     const email = event.data.customer.email;
 
     // ======================
-    // 🔒 IDEMPOTENCY LOCK (VERY IMPORTANT)
+    // IDEMPOTENCY LOCK
     // ======================
     const lockKey = `paystack:${reference}`;
+
     const locked = await client.get(lockKey);
+    if (locked) return res.sendStatus(200);
 
-    if (locked) {
-      return res.sendStatus(200);
-    }
-
-    await client.set(lockKey, "processing", { EX: 300 });
+    await client.set(lockKey, "processing", "EX", 300);
 
     // ======================
-    // CHECK PAYMENT
+    // PAYMENT CHECK
     // ======================
     const payment = await db.query(
       "SELECT * FROM payments WHERE reference=$1",
@@ -77,7 +67,7 @@ router.post("/paystack", async (req, res) => {
     }
 
     // ======================
-    // GET USER
+    // USER CHECK
     // ======================
     const user = await db.query(
       "SELECT id, status FROM users WHERE email=$1",
@@ -89,13 +79,12 @@ router.post("/paystack", async (req, res) => {
       return res.sendStatus(200);
     }
 
-    const userId = user.rows[0].id;
-
-    // 🚨 block frozen/suspended users
     if (["frozen", "suspended"].includes(user.rows[0].status)) {
       await client.del(lockKey);
       return res.sendStatus(200);
     }
+
+    const userId = user.rows[0].id;
 
     await db.query("BEGIN");
 
@@ -111,14 +100,12 @@ router.post("/paystack", async (req, res) => {
     // CREDIT WALLET
     // ======================
     await db.query(
-      `UPDATE users 
-       SET balance = balance + $1 
-       WHERE id=$2`,
+      `UPDATE users SET balance = balance + $1 WHERE id=$2`,
       [amount, userId]
     );
 
     // ======================
-    // TRANSACTION LOG
+    // LOG TRANSACTION
     // ======================
     await db.query(
       `INSERT INTO transactions (user_id, type, amount, reference)
@@ -128,11 +115,11 @@ router.post("/paystack", async (req, res) => {
 
     await db.query("COMMIT");
 
-    // cleanup lock
+    // cleanup lock (safe even if commit fails)
     await client.del(lockKey);
 
     // ======================
-    // OPTIONAL: REAL-TIME HOOKS (IMPORTANT FOR YOUR DASHBOARD)
+    // EVENTS (SAFE IMPORT POSITION)
     // ======================
     const { publishDashboardUpdate, publishEvent } = require("../services/events");
 
@@ -145,12 +132,16 @@ router.post("/paystack", async (req, res) => {
       amount
     });
 
-    res.sendStatus(200);
+    return res.sendStatus(200);
 
   } catch (err) {
-    await db.query("ROLLBACK");
-    console.error("WEBHOOK ERROR:", err);
-    res.sendStatus(500);
+    try {
+      await db.query("ROLLBACK");
+    } catch (_) {}
+
+    console.error("WEBHOOK ERROR:", err.message);
+
+    return res.sendStatus(500);
   }
 });
 
