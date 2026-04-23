@@ -7,44 +7,66 @@ const { processReferralBonus } = require("./referralBonus");
 const { detectFraud } = require("./fraud");
 const { sendNotification } = require("./notifications");
 
-const client = redis;
+// ======================
+// CONFIG
+// ======================
+const GLOBAL_LOCK = "auto_approval_lock_v2";
+const LOCK_TTL = 600;
+const TASK_LOCK_TTL = 3600;
+const BATCH_LIMIT = 50;
 
 // ======================
-// AUTO TASK APPROVAL JOB
+// SAFE LOCK HELPERS
+// ======================
+async function acquireLock(key, ttl) {
+  const result = await redis.set(key, "1", "NX", "EX", ttl);
+  return result === "OK";
+}
+
+async function releaseLock(key) {
+  await redis.del(key);
+}
+
+// ======================
+// AUTO TASK APPROVAL JOB (V2)
 // ======================
 cron.schedule("*/10 * * * *", async () => {
-  console.log("⏱ Running auto-approval job...");
+  console.log("⏱ Auto-approval job v2 running...");
 
-  // 🔒 global lock (prevents multi-instance duplication)
-  const lock = await client.get("auto_approval_lock");
-  if (lock) return;
+  const locked = await acquireLock(GLOBAL_LOCK, LOCK_TTL);
+  if (!locked) return;
 
-  await client.set("auto_approval_lock", "1", { EX: 600 });
+  let processed = 0;
 
   try {
+    // ======================
+    // FETCH PENDING TASKS
+    // ======================
     const pending = await db.query(
       `SELECT ts.*, t.reward, t.escrow_id
        FROM task_submissions ts
        JOIN tasks t ON ts.task_id = t.id
        WHERE ts.status='pending'
        AND ts.created_at < NOW() - INTERVAL '24 hours'
-       LIMIT 50`
+       ORDER BY ts.created_at ASC
+       LIMIT $1`,
+      [BATCH_LIMIT]
     );
 
-    for (let sub of pending.rows) {
-      const userId = sub.user_id;
+    for (const sub of pending.rows) {
+      const taskLockKey = `task_process_v2:${sub.id}`;
 
-      // 🔒 per-task lock (prevents double processing)
-      const taskLockKey = `task_process:${sub.id}`;
-      const taskLock = await client.get(taskLockKey);
-
-      if (taskLock) continue;
-
-      await client.set(taskLockKey, "1", { EX: 3600 });
+      // ======================
+      // PER-TASK LOCK
+      // ======================
+      const taskLocked = await acquireLock(taskLockKey, TASK_LOCK_TTL);
+      if (!taskLocked) continue;
 
       try {
+        const userId = sub.user_id;
+
         // ======================
-        // 1. RELEASE ESCROW
+        // 1. ESCROW RELEASE
         // ======================
         await releaseEscrow(
           sub.escrow_id,
@@ -53,15 +75,17 @@ cron.schedule("*/10 * * * *", async () => {
         );
 
         // ======================
-        // 2. MARK APPROVED
+        // 2. MARK APPROVED (SAFE UPDATE)
         // ======================
         await db.query(
-          "UPDATE task_submissions SET status='approved' WHERE id=$1",
+          `UPDATE task_submissions
+           SET status='approved'
+           WHERE id=$1 AND status!='approved'`,
           [sub.id]
         );
 
         // ======================
-        // 3. FRAUD CHECK
+        // 3. FRAUD CHECK (ASYNC SAFE)
         // ======================
         const risk = await detectFraud(userId);
 
@@ -71,7 +95,7 @@ cron.schedule("*/10 * * * *", async () => {
         await processReferralBonus(userId);
 
         // ======================
-        // 5. NOTIFICATION (NEW SYSTEM)
+        // 5. NOTIFICATION
         // ======================
         await sendNotification(
           userId,
@@ -79,17 +103,26 @@ cron.schedule("*/10 * * * *", async () => {
           `₦${sub.reward} has been credited`
         );
 
-        console.log(`✅ Auto-approved task: ${sub.id}`);
+        // ======================
+        // LOG SUCCESS
+        // ======================
+        console.log(`[AUTO-APPROVE SUCCESS] task=${sub.id} user=${userId} risk=${risk}`);
+
+        processed++;
 
       } catch (err) {
-        console.error(`❌ Task failed ${sub.id}:`, err.message);
+        console.error(`[TASK ERROR] id=${sub.id}`, err.message);
+      } finally {
+        await releaseLock(taskLockKey);
       }
     }
 
+    console.log(`✅ Auto-approval completed. Processed: ${processed}`);
+
   } catch (err) {
-    console.error("Auto-approval job error:", err);
+    console.error("❌ Scheduler fatal error:", err.message);
 
   } finally {
-    await client.del("auto_approval_lock");
+    await releaseLock(GLOBAL_LOCK);
   }
 });
