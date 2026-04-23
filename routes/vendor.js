@@ -4,51 +4,13 @@ const auth = require("../middleware/auth");
 const vendor = require("../middleware/vendor");
 const ctrl = require("../controllers/vendorController");
 
-// ======================
 // CREATE VENDOR PROFILE
-// ======================
-router.post(
-  "/create",
-  auth,
-  async (req, res, next) => {
-    try {
-      await ctrl.createVendor(req, res);
-    } catch (err) {
-      next(err);
-    }
-  }
-);
+router.post("/create", auth, ctrl.createVendor);
 
-// ======================
 // VENDOR DASHBOARD
-// ======================
-router.get(
-  "/dashboard",
-  auth,
-  vendor,
-  async (req, res, next) => {
-    try {
-      await ctrl.dashboard(req, res);
-    } catch (err) {
-      next(err);
-    }
-  }
-);
+router.get("/dashboard", auth, vendor, ctrl.dashboard);
 
-// ======================
 // FUND VENDOR WALLET
-// ======================
-router.post(
-  "/fund",
-  auth,
-  vendor,
-  async (req, res, next) => {
-    try {
-      await ctrl.addFunds(req, res);
-    } catch (err) {
-      next(err);
-    }
-  }
-);
+router.post("/fund", auth, vendor, ctrl.addFunds);
 
 module.exports = router;
