@@ -1,128 +1,155 @@
 const db = require("../db");
 const client = require("./redis");
+const { emitEvent, OPS_CHANNELS } = require("./events");
 
 // ======================
-// THRESHOLDS (EASY TUNING LATER)
+// THRESHOLDS (BASELINE)
 // ======================
 const THRESHOLDS = {
-  TASK_LOW: 5,
-  TASK_HIGH: 15,
-  WITHDRAWAL_LIMIT: 3,
-  RISK_RESTRICT: 70,
-  RISK_FREEZE: 90
+  LOW: 40,
+  MEDIUM: 70,
+  HIGH: 90
 };
 
 // ======================
-// FRAUD RISK ENGINE
+// FEATURE BUILDER (KEY AI LAYER)
 // ======================
-async function detectFraud(userId) {
-  const user = await db.query(
-    "SELECT id, email FROM users WHERE id=$1",
-    [userId]
-  );
+async function buildFeatures(userId) {
+  const [user, tasks, withdrawals] = await Promise.all([
+    db.query("SELECT email, created_at FROM users WHERE id=$1", [userId]),
 
-  if (!user.rows.length) return 0;
-
-  let risk = 0;
-  const email = user.rows[0].email;
-
-  // ======================
-  // RULE 1: TASK ABUSE
-  // ======================
-  const recentTasks = await db.query(
-    `SELECT COUNT(*) FROM task_submissions
-     WHERE user_id=$1
-     AND created_at > NOW() - INTERVAL '1 hour'`,
-    [userId]
-  );
-
-  const taskCount = Number(recentTasks.rows[0].count);
-
-  if (taskCount > THRESHOLDS.TASK_LOW) risk += 30;
-  if (taskCount > THRESHOLDS.TASK_HIGH) risk += 50;
-
-  // ======================
-  // RULE 2: WALLET ACTIVITY (REDIS)
-  // ======================
-  const key = `wallet_activity:${userId}`;
-  const raw = await client.get(key);
-
-  let activityCount = 0;
-
-  if (raw) {
-    try {
-      const data = JSON.parse(raw);
-      activityCount = data.count || 0;
-    } catch {
-      activityCount = 0;
-    }
-  }
-
-  activityCount += 1;
-
-  await client.set(
-    key,
-    JSON.stringify({ count: activityCount }),
-    "EX",
-    3600
-  );
-
-  if (activityCount > 10) risk += 30;
-  if (activityCount > 20) risk += 50;
-
-  // ======================
-  // RULE 3: MULTI ACCOUNT
-  // ======================
-  if (email.includes("+")) {
-    risk += 15;
-  }
-
-  // ======================
-  // RULE 4: WITHDRAWALS
-  // ======================
-  const withdrawals = await db.query(
-    `SELECT COUNT(*) FROM withdrawals
-     WHERE user_id=$1
-     AND created_at > NOW() - INTERVAL '24 hours'`,
-    [userId]
-  );
-
-  const withdrawalCount = Number(withdrawals.rows[0].count);
-
-  if (withdrawalCount > THRESHOLDS.WITHDRAWAL_LIMIT) {
-    risk += 40;
-  }
-
-  // ======================
-  // FINAL ACTION
-  // ======================
-  if (risk >= THRESHOLDS.RISK_RESTRICT && risk < THRESHOLDS.RISK_FREEZE) {
-    await db.query(
-      `UPDATE users SET status='restricted' WHERE id=$1`,
+    db.query(
+      `SELECT COUNT(*) FROM task_submissions
+       WHERE user_id=$1
+       AND created_at > NOW() - INTERVAL '1 hour'`,
       [userId]
-    );
+    ),
 
-    await db.query(
-      `INSERT INTO fraud_flags (user_id, severity, reason)
-       VALUES ($1,'medium','Auto restriction triggered')`,
+    db.query(
+      `SELECT COUNT(*) FROM withdrawals
+       WHERE user_id=$1
+       AND created_at > NOW() - INTERVAL '24 hours'`,
       [userId]
-    );
-  }
+    )
+  ]);
 
-  if (risk >= THRESHOLDS.RISK_FREEZE) {
+  const email = user.rows[0]?.email || "";
+
+  const walletRaw = await client.get(`wallet_activity:${userId}`);
+  const walletActivity = walletRaw ? JSON.parse(walletRaw).count : 0;
+
+  return {
+    taskVelocity: Number(tasks.rows[0].count),
+    withdrawalVelocity: Number(withdrawals.rows[0].count),
+    walletActivity,
+    emailPattern: email.includes("+") ? 1 : 0,
+    accountAgeHours:
+      (Date.now() - new Date(user.rows[0]?.created_at || Date.now())) /
+      (1000 * 60 * 60)
+  };
+}
+
+// ======================
+// AI SCORING ENGINE (HYBRID)
+// ======================
+function calculateRisk(features) {
+  let score = 0;
+
+  // velocity anomalies
+  if (features.taskVelocity > 5) score += 25;
+  if (features.taskVelocity > 15) score += 35;
+
+  if (features.withdrawalVelocity > 3) score += 40;
+
+  // wallet abnormal usage
+  if (features.walletActivity > 10) score += 25;
+  if (features.walletActivity > 20) score += 40;
+
+  // email risk pattern
+  if (features.emailPattern) score += 15;
+
+  // new account risk
+  if (features.accountAgeHours < 1) score += 20;
+  if (features.accountAgeHours < 24) score += 10;
+
+  return Math.min(score, 100);
+}
+
+// ======================
+// DECISION ENGINE
+// ======================
+async function applyDecision(userId, riskScore, features) {
+  let action = "allow";
+
+  if (riskScore >= THRESHOLDS.HIGH) {
+    action = "freeze";
+
     await db.query(
       `UPDATE users SET status='frozen' WHERE id=$1`,
       [userId]
     );
 
-    await db.query(
-      `INSERT INTO fraud_flags (user_id, severity, reason)
-       VALUES ($1,'high','Critical fraud detected')`,
-      [userId]
-    );
+    await emitEvent(OPS_CHANNELS.FRAUD, {
+      userId,
+      riskScore,
+      action,
+      features
+    }, "critical");
   }
 
-  return risk;
+  else if (riskScore >= THRESHOLDS.MEDIUM) {
+    action = "restrict";
+
+    await db.query(
+      `UPDATE users SET status='restricted' WHERE id=$1`,
+      [userId]
+    );
+
+    await emitEvent(OPS_CHANNELS.FRAUD, {
+      userId,
+      riskScore,
+      action,
+      features
+    });
+  }
+
+  else {
+    action = "allow";
+
+    await emitEvent(OPS_CHANNELS.FRAUD, {
+      userId,
+      riskScore,
+      action: "monitor",
+      features
+    });
+  }
+
+  return action;
+}
+
+// ======================
+// MAIN FRAUD ENGINE
+// ======================
+async function detectFraud(userId) {
+  const features = await buildFeatures(userId);
+
+  const riskScore = calculateRisk(features);
+
+  const action = await applyDecision(userId, riskScore, features);
+
+  // store final state
+  await client.set(
+    `risk:${userId}`,
+    JSON.stringify({
+      riskScore,
+      action,
+      timestamp: Date.now()
+    }),
+    "EX",
+    3600
+  );
+
+  return riskScore;
 }
 
 module.exports = { detectFraud };
