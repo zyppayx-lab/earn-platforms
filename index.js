@@ -1,108 +1,141 @@
 const express = require("express");
 const dotenv = require("dotenv");
 const bodyParser = require("body-parser");
+const helmet = require("helmet");
+const morgan = require("morgan");
 
 dotenv.config();
 
 const app = express();
 
 // ======================
-// JSON PARSER
+// SECURITY BASELINE
+// ======================
+app.use(helmet());
+app.disable("x-powered-by");
+
+// ======================
+// BODY PARSER
 // ======================
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 // ======================
-// PAYSTACK WEBHOOK RAW BODY
+// PAYSTACK WEBHOOK RAW BODY (CRITICAL)
 // ======================
-app.use("/webhook", bodyParser.json({
-  verify: (req, res, buf) => {
-    req.rawBody = buf;
-  }
-}));
+app.use(
+  "/webhook",
+  bodyParser.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    }
+  })
+);
 
 // ======================
-// BACKGROUND JOBS
+// REQUEST LOGGING
 // ======================
-require("./services/scheduler");
+app.use(
+  morgan("combined", {
+    skip: (req) => req.url === "/health"
+  })
+);
 
 // ======================
-// SECURITY HEADERS
+// BACKGROUND SYSTEMS
 // ======================
-app.use((req, res, next) => {
-  res.setHeader("X-Powered-By", "Trivexa Pay");
-  res.setHeader("X-Content-Type-Options", "nosniff");
-  res.setHeader("X-Frame-Options", "DENY");
-  next();
-});
+require("./services/scheduler"); // cron jobs
+require("./services/events"); // event bus init (if needed)
 
 // ======================
-// REQUEST LOGGER
-// ======================
-app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-  next();
-});
-
-// ======================
-// ROUTES (FULL SYSTEM)
+// ROUTES - CORE SYSTEM
 // ======================
 
-// AUTH
+// AUTH SYSTEM
 app.use("/auth", require("./routes/auth"));
 
-// WALLET
+// WALLET SYSTEM
 app.use("/wallet", require("./routes/wallet"));
 
-// PAYMENTS
+// PAYMENT ORCHESTRATION (Paystack + webhook handling)
 app.use("/payments", require("./routes/payments"));
 
-// TASK SYSTEM
+// TASK MARKETPLACE ENGINE
 app.use("/tasks", require("./routes/tasks"));
 
 // VENDOR SYSTEM
 app.use("/vendor", require("./routes/vendor"));
 
-// ESCROW SYSTEM (NEW)
+// ESCROW ENGINE (LOCK/RELEASE FUNDS)
 app.use("/escrow", require("./routes/escrow"));
 
-// ADMIN
+// ADMIN CONTROL CENTER (core admin routes)
 app.use("/admin", require("./routes/admin"));
 
-// ANALYTICS
+// ADMIN ANALYTICS DASHBOARD
 app.use("/admin-analytics", require("./routes/adminAnalytics"));
 
-// REALTIME
+// REAL-TIME EVENT STREAM (SSE)
 app.use("/realtime", require("./routes/realtime"));
 
-// WEBHOOK
+// WEBHOOK HANDLERS (Paystack, external systems)
 app.use("/webhook", require("./routes/webhook"));
 
 // ======================
-// HEALTH CHECK
+// HEALTH CHECK (OPS CONTROL CENTER)
 // ======================
-app.get("/", (req, res) => {
+app.get("/health", (req, res) => {
   res.json({
     app: "Trivexa Pay",
-    status: "running",
-    version: "1.7.0",
-    modules: ["users", "vendors", "escrow", "admin"]
+    status: "healthy",
+    version: "2.0.0",
+    services: {
+      auth: "active",
+      wallet: "active",
+      payments: "active",
+      escrow: "active",
+      tasks: "active",
+      vendor: "active",
+      admin: "active",
+      realtime: "active",
+      webhook: "active"
+    },
+    uptime: process.uptime()
   });
 });
 
 // ======================
-// 404
+// ROOT INFO
 // ======================
-app.use((req, res) => {
-  res.status(404).json({ error: "Route not found" });
+app.get("/", (req, res) => {
+  res.json({
+    name: "Trivexa Pay API",
+    status: "running",
+    version: "2.0.0",
+    architecture: "event-driven + escrow-based fintech system"
+  });
 });
 
 // ======================
-// ERROR HANDLER
+// 404 HANDLER
+// ======================
+app.use((req, res) => {
+  res.status(404).json({
+    error: "Route not found",
+    path: req.originalUrl
+  });
+});
+
+// ======================
+// GLOBAL ERROR HANDLER
 // ======================
 app.use((err, req, res, next) => {
-  console.error("SERVER ERROR:", err);
-  res.status(500).json({ error: err.message });
+  console.error("🔥 SERVER ERROR:", err);
+
+  res.status(500).json({
+    error: "Internal server error",
+    message: err.message
+  });
 });
 
 // ======================
@@ -111,7 +144,9 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log(`🚀 Trivexa Pay running on port ${PORT}`);
-  console.log(`💰 Escrow System ACTIVE`);
-  console.log(`🧑‍💼 Vendor System ACTIVE`);
+  console.log("🚀 Trivexa Pay running on port", PORT);
+  console.log("🏦 Escrow Engine ACTIVE");
+  console.log("💳 Payment Orchestrator ACTIVE");
+  console.log("🧠 Fraud System ACTIVE");
+  console.log("📡 Real-time Engine ACTIVE");
 });
